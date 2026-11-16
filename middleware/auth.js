@@ -19,14 +19,31 @@ function authenticateToken(req, res, next) {
     if (!session) {
         return res.status(401).json({ success: false, message: '无效的 token' });
     }
-    
-    if (Date.now() - session.createdAt > 24 * 60 * 60 * 1000) {
-        delete allSessions[token];
+
+    // 会话有效期 = 滑动空闲 72h + 绝对上限 30 天 (2026-11-13 起; 旧的固定 24h 会让第二天回来必 401)
+    if (sessions.isSessionExpired(session)) {
+        if (sessions.purgeSession) {
+            sessions.purgeSession(token);
+        } else {
+            delete allSessions[token];
+        }
         sessions.saveSessions();
         res.clearCookie('token');
-        return res.status(401).json({ success: false, message: '登录已过期，请重新登录' });
+        return res.status(401).json({ success: false, message: '登录已过期（连续 3 天无操作），请重新登录' });
     }
-    
+
+    // 滑动续期: 有请求就往后顺延, 并把浏览器 cookie 一起滚动(节流 1h), 避免 cookie 先于会话过期
+    if (sessions.touchSession) sessions.touchSession(session);
+    var now = Date.now();
+    if (!session.cookieRefreshedAt || now - session.cookieRefreshedAt > sessions.COOKIE_REFRESH_INTERVAL_MS) {
+        session.cookieRefreshedAt = now;
+        res.cookie('token', token, {
+            httpOnly: true,
+            maxAge: sessions.COOKIE_MAX_AGE_MS,
+            sameSite: 'lax'
+        });
+    }
+
     req.user = session;
     next();
 }

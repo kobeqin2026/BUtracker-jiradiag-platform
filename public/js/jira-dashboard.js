@@ -301,6 +301,7 @@ async function verifyAuth() {
 async function loadJiraProjects() {
     try {
         var resp = await fetch('/api/data/jira-projects', { credentials: 'same-origin' });
+        if (resp.status === 401) { handleAuthExpired(); return; }
         var data = await resp.json();
         if (data.success) {
             Dashboard.projects = data.projects;
@@ -480,6 +481,11 @@ async function fetchDashboardData() {
 
         // Debug: check response status
         if (!resp.ok) {
+            if (resp.status === 401) {
+                handleAuthExpired();
+                showLoading(false);
+                return;
+            }
             showError('请求失败: HTTP ' + resp.status);
             showLoading(false);
             return;
@@ -1294,6 +1300,17 @@ function showError(msg) {
 
 function hideError() {
     document.getElementById('error-message').style.display = 'none';
+}
+
+// 统一 401 处理: 会话失效时回到登录门, 而不是只显示「请求失败: HTTP 401」。
+// 会话有效期自 v6.x 起为「连续 72h 无操作」才失效(绝对上限 30 天), 见后端 lib/sessions.js。
+function handleAuthExpired(msg) {
+    showError(msg || '登录已过期（连续 3 天无操作后才失效），请重新登录');
+    if (typeof showGateLogin === 'function') {
+        showGateLogin();
+        var err = document.getElementById('gate-login-err');
+        if (err) err.textContent = '登录已过期，请重新登录（会话有效期已延长为 3 天无操作）';
+    }
 }
 
 function hideAllData() {

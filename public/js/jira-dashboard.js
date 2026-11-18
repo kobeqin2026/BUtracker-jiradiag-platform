@@ -2393,10 +2393,7 @@ function renderBugRows(bugs) {
         var tdDesc = document.createElement('td');
         tdDesc.textContent = bug.summary || bug.description;
         tdDesc.title = bug.summary || bug.description;
-        tdDesc.style.maxWidth = '300px';
-        tdDesc.style.overflow = 'hidden';
-        tdDesc.style.textOverflow = 'ellipsis';
-        tdDesc.style.whiteSpace = 'nowrap';
+        tdDesc.className = 'cell-ttl';
         tr.appendChild(tdDesc);
 
         var tdStatus = document.createElement('td');
@@ -2415,10 +2412,12 @@ function renderBugRows(bugs) {
 
         var tdOwner = document.createElement('td');
         tdOwner.textContent = bug.owner;
+        tdOwner.title = bug.owner || '';
         tr.appendChild(tdOwner);
 
         var tdDomain = document.createElement('td');
         tdDomain.textContent = bug.domain;
+        tdDomain.title = bug.domain || '';
         tr.appendChild(tdDomain);
 
         var tdDate = document.createElement('td');
@@ -2468,13 +2467,18 @@ function renderBugRows(bugs) {
 
         var tdEsc = document.createElement('td');
         if (s.escalated) {
-            tdEsc.innerHTML = '<span class="sla-badge sla-esc-done">已升档' + (s.escFrom ? '(' + SLA_NAME[s.escFrom] + ')' : '') + '</span>';
+            // 列宽有限：徽章只放短标签，原档信息放 title（悬停可见）
+            tdEsc.innerHTML = '<span class="sla-badge sla-esc-done">已升档</span>';
+            tdEsc.title = '已升档' + (s.escFrom ? '（原档 ' + SLA_NAME[s.escFrom] + '）' : '') + '；请确认升档后是否还在静默';
         } else if (s.shouldEscalate) {
             tdEsc.innerHTML = '<span class="sla-badge sla-esc-suggest">→ ' + SLA_NAME[s.escTarget] + '</span>';
+            tdEsc.title = '建议升一档：' + SLA_NAME[s.prio] + ' → ' + SLA_NAME[s.escTarget] + '（人在 JIRA 里改）';
         } else if (s.atTop) {
-            tdEsc.innerHTML = '<span class="sla-badge sla-esc-top">到顶·升级到人</span>';
+            tdEsc.innerHTML = '<span class="sla-badge sla-esc-top">到顶</span>';
+            tdEsc.title = '已是 Highest 仍红牌 → 不升档，改升级到人（owner → PM）';
         } else if (s.paused) {
             tdEsc.innerHTML = '<span class="sla-badge sla-paused">挂起</span>';
+            tdEsc.title = '挂起中（sla-paused）：静默不计、不升档';
         } else {
             tdEsc.textContent = '';
         }

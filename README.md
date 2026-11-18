@@ -1,7 +1,7 @@
 # GPU Bring-up Daily Status Tracker
 
 ![GPU Issue Debug Expert](https://img.shields.io/badge/GPU%20Issue%20Debug%20Expert-blue)
-![Version](https://img.shields.io/badge/version-v6.3.0-blue)
+![Version](https://img.shields.io/badge/version-v6.3.1-blue)
 
 一个用于追踪GPU芯片Bring-up进度的Web应用，支持多项目切换、用户权限管理和实时协作。
 
@@ -30,7 +30,7 @@
 - **测试用例进度列 (Domain Overview)**: 从 JIRA 顶层 Test Plan 树实时聚合各 Domain 测试用例（通过/失败/执行中/未执行/豁免），进度条 + done/total 数字展示
 - **Domain 状态自动一致 (准出标准驱动)**: 全部 Pass 自动 Completed 并记录 BU 准出时间，解除后自动回退，不覆盖手动状态
 - **JIRA Bug Dashboard**: 独立可视化页面（`/jira-dashboard.html`），提供JIRA Bug统计与分析
-- **软件 Bug SLA（阶段1 · 只读建议）**: 在 JIRA Bug Dashboard 上按「首次响应 / 持续响应心跳 / 修复完成 / 验证关闭」四段口径判定每条 Bug，输出黄牌 / 红牌 / 修复超期 / 挂起 / 已升档五张清单（每页 5 条，可一键复制成 JIRA 批量操作清单），只读不改 JIRA；标签协议 `sla-paused` / `sla-escalated` / `sla-from-<原档>` 见「软件 Bug SLA」章节
+- **软件 Bug SLA（阶段1 · 只读建议）**: 在 JIRA Bug Dashboard 上按「首次响应 / 持续响应心跳 / 修复完成 / 验证关闭」四段口径判定每条 Bug，输出黄牌 / 红牌 / 修复超期 / 挂起 / 已升档五张清单（每页 5 条，可一键复制成 JIRA 批量操作清单），只读不改 JIRA；并提供「待接单（triage 队列）」供 Triage Owner 人工 triage（不判超期、不亮灯）；标签协议 `sla-paused` / `sla-escalated` / `sla-from-<原档>` 见「软件 Bug SLA」章节
 
 ### 技术特性
 - [API 文档](API.md)
@@ -206,6 +206,8 @@ enhanced-gpu-bu-daily-status-tracker/
 
 **阶段1 界面上实际落地的是 ②③ 两段**：①④ 需要 JIRA changelog / 状态流转历史，而 `/api/data/jira-dashboard` 返回的 payload 里只有 `created`（映射为 `reportDate`）与 `updated`（`updatedDate`），没有首次响应时间与关闭时间。表格保留 ①④ 是为了口径完整、与团队提案（PPT P4）保持一致，后续可从 changelog 补齐。
 
+> **① 首次响应不做自动判定**：triage 由 Triage Owner（人工）掌控节奏，看板只提供「待接单（triage 队列）」排队视图，不判超期、不亮红黄灯、不计入停滞率（见第 11 节）。要自动化 ① 需抓 JIRA changelog，见第 10 节。
+
 ### 2. 判定量：全部在前端算，后端零改动
 
 ```js
@@ -340,7 +342,32 @@ var SLA_VERIFY = { highest: '1 工作日', high: '2 工作日', medium: '3 工�
 3. 用历史快照对比 Priority 变化，**自动识别升档**（不依赖 `sla-escalated`），label 作为兜底；
 4. 阶段2：服务账号幂等写回 JIRA（升档 + 自动评论），需评审。
 
+### 11. 待接单（triage 队列）
+
+① 首次响应不交给系统判定，改为**人工 triage**：Triage Owner 每天过一遍队列，决定每条单的 Domain / 负责人 / 组件，然后在 JIRA 里认领（状态离开 `Opened`）。看板只负责「不漏单」：
+
+- **取数规则**：未关闭 且 `jiraStatus === 'Opened'`（还没人接）
+- **排序**：优先级降序（Highest → Low），同档按已开时长降序（最久没人接的排最前）
+- **列**：Key、标题、优先级、已开、报单人、组件、Domain、负责人（`无主` 红字标出未分配的单）
+- **已开**：`< 48 小时`给小时精度（`createdTimestamp` 有毫秒），否则给天数
+- **明确不做**：不判超期、不亮红黄灯、不计入停滞率 —— 队列里的 `< 1× 心跳` 与 `> 3× 心跳` 是同一行样式，避免和心跳的告警色混淆
+- **计数**：chips 里单列一格「待接单 N（最久 X 天）」，只为"漏了能看见"，不做问责
+- **复制清单**：TSV（Key/优先级/已开/组件/报单人/负责人/标题）+ 末尾 `Keys:` 行
+
+Triage 完成的标准动作（人在 JIRA 里做）：状态离开 `Opened` + 填 Assignee/Component；信息不全的单直接评论要求补料或给 `sla-needinfo` 类标签，不要让它长期留在队列里。
+
 ## 版本历史
+
+### v6.3.1 (2026-11-18)
+**① 首次响应改为人工 triage + 新增「待接单（triage 队列）」**
+
+- 口径：① 首次响应不交给系统判定（triage 由 Triage Owner 手动掌控节奏）——不判超期、不亮红黄灯、不计入停滞率、不对外报 ① 达标率；阈值表保留 ① 列仅作 triage 目标
+- 新增「待接单（triage 队列）」：未关闭且 `jiraStatus === 'Opened'` 的单，按优先级降序 + 已开时长降序排队
+  - 列：Key / 标题 / 优先级 / 已开 / 报单人 / 组件 / Domain / 负责人（未分配显示红色「无主」）
+  - `已开`：< 48 小时给小时精度（`createdTimestamp` 毫秒），否则天数
+  - chips 新增「待接单 N（最久 X 天）」，蓝灰色（`.sla-chip-triage`），与黄/红告警色区分
+  - 接入统一翻页（每页 5 条）+ 复制清单（TSV + `Keys:` 行）
+- README 新增 §11「待接单（triage 队列）」：取数规则、排序、列定义、明确不做的四件事、triage 完成的标准动作
 
 ### v6.3.0 (2026-11-18)
 **软件 Bug SLA 阶段1：只读建议面板（四段口径 + 五张清单 + 翻页 + 一键复制）**
@@ -1842,4 +1869,4 @@ MIT License
 ---
 
 **最后更新**: 2026年8月27日  
-**版本**: 6.3.0
+**版本**: 6.3.1

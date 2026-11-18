@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JIRA Bug Dashboard - GPU Tracker</title>
     <link rel="stylesheet" href="/css/base.css">
-    <link rel="stylesheet" href="/css/jira-dashboard.css?v=21">
+    <link rel="stylesheet" href="/css/jira-dashboard.css?v=22">
     <link rel="stylesheet" href="/css/theme-kpi.css?v=7">
     <style id="theme-dashboard">
         /* jira-dashboard 浅色统一（白底，与 8089 Test Case Manager 同一套观感）：
@@ -428,6 +428,26 @@
             </div>
             <div class="sla-chips" id="sla-chips"></div>
             <div class="sla-block">
+                <div class="sla-block-title">待接单（triage 队列） <span class="sla-hint">状态仍为 Opened 的单 —— 由 Triage Owner 手动认领；本队列只排队，<b>不做 SLA 判定、不亮灯、不计入停滞率</b></span>
+                    <button class="sla-copy-btn" onclick="slaCopyTriage()">复制清单</button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="dashboard-bug-table sla-table" id="sla-triage-table">
+                        <colgroup>
+                            <col style="width:12%"><col style="width:25%"><col style="width:9%"><col style="width:9%">
+                            <col style="width:11%"><col style="width:12%"><col style="width:11%"><col style="width:11%">
+                        </colgroup>
+                        <thead><tr>
+                            <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">已开</th>
+                            <th>报单人</th><th>组件</th><th>Domain</th><th>负责人</th>
+                        </tr></thead>
+                        <tbody id="sla-triage-body"></tbody>
+                    </table>
+                </div>
+                <div class="sla-pager" id="sla-triage-pager"></div>
+                <div class="sla-empty" id="sla-triage-empty" style="display:none;">待接单队列为空（没有停留在 Opened 的单）</div>
+            </div>
+            <div class="sla-block">
                 <div class="sla-block-title">黄牌清单 <span class="sla-hint">静默 &gt; 1× 心跳（只提醒、不升档）—— 周会照单点名，催一次就把心跳续上</span>
                     <button class="sla-copy-btn" onclick="slaCopyWarn()">复制清单</button>
                 </div>
@@ -699,6 +719,6 @@
         #export-tbody tr:hover { background: #f7f9fc; }
     </style>
 
-    <script src="/js/jira-dashboard.js?v=94"></script>
+    <script src="/js/jira-dashboard.js?v=95"></script>
 </body>
 </html>

@@ -1902,6 +1902,8 @@ function updateKPIFromFiltered(bugs) {
 var SLA_FIX = { highest: 7, high: 14, medium: 30, low: 60 };
 var SLA_CAD = { highest: 2, high: 3, medium: 7, low: 14 };
 var SLA_NEXT = { low: 'medium', medium: 'high', high: 'highest', highest: null };
+// 排序用：优先级序位（0 = 最高）
+var SLA_RANK = { highest: 0, high: 1, medium: 2, low: 3 };
 var SLA_NAME = { highest: 'Highest', high: 'High', medium: 'Medium', low: 'Low' };
 var SLA_PAUSED_LABEL = 'sla-paused';
 var SLA_ESC_LABEL = 'sla-escalated';
@@ -1990,6 +1992,14 @@ function renderSlaPanel(bugs) {
     var near = open.filter(function (b) { return b.sla.fixRemain !== null && b.sla.fixRemain >= 0 && b.sla.fixRemain <= Math.max(1, Math.round((b.sla.fixTarget || 0) * 0.2)); });
     var paused = open.filter(function (b) { return b.sla.paused; });
     var escalated = all.filter(function (b) { return b.sla.escalated; });
+    // 待接单（triage 队列）：状态仍为 Opened，只排队不做 SLA 判定
+    var triage = open.filter(function (b) { return /^opened$/i.test(b.jiraStatus || ''); })
+        .sort(function (a, b) {
+            var ra = SLA_RANK[a.severity], rb = SLA_RANK[b.severity];
+            ra = (ra === undefined) ? 9 : ra; rb = (rb === undefined) ? 9 : rb;
+            if (ra !== rb) return ra - rb;                              // 优先级高的在前
+            return (b.sla.daysOpen || 0) - (a.sla.daysOpen || 0);       // 同档按已开天数降序
+        });
 
     var chips = document.getElementById('sla-chips');
     if (chips) {
@@ -1998,7 +2008,9 @@ function renderSlaPanel(bugs) {
             '<div class="sla-chip sla-chip-red"><b>' + red.length + '</b><span>红牌（静默 &gt; 2× 心跳）</span></div>' +
             '<div class="sla-chip sla-chip-fix"><b>' + fixOver.length + '</b><span>修复超期</span><i>临期 ' + near.length + '</i></div>' +
             '<div class="sla-chip"><b>' + paused.length + '</b><span>挂起 sla-paused</span></div>' +
-            '<div class="sla-chip"><b>' + escalated.length + '</b><span>已升档（追踪中）</span></div>';
+            '<div class="sla-chip"><b>' + escalated.length + '</b><span>已升档（追踪中）</span></div>' +
+            '<div class="sla-chip sla-chip-triage"><b>' + triage.length + '</b><span>待接单（triage 队列）</span>' +
+            (triage.length ? '<i>最久 ' + (triage[0].sla.daysOpen === null ? '?' : triage[0].sla.daysOpen) + ' 天</i>' : '') + '</div>';
     }
 
     var note = document.getElementById('sla-scope-note');
@@ -2057,6 +2069,32 @@ function renderSlaPanel(bugs) {
             '<td>' + (b.domain || '-') + '</td><td>' + (b.owner || '-') + '</td></tr>';
     }
 
+    function slaAgeText(b) {
+        // 已开时长：< 48 小时给小时精度（createdTimestamp 有毫秒），否则给天数
+        var ts = b.createdTimestamp;
+        if (!ts) return (b.sla.daysOpen === null ? '-' : b.sla.daysOpen + ' 天');
+        var hours = (Date.now() - ts) / 3600000;
+        if (hours < 0) hours = 0;
+        if (hours < 48) return Math.max(1, Math.round(hours)) + ' 小时';
+        return Math.round(hours / 24) + ' 天';
+    }
+
+    function rowTriage(b) {
+        var s = b.sla;
+        var ttl = bugTitle(b);
+        var noOwner = !b.owner || /^tbd$/i.test(b.owner);
+        var comp = (b.components && b.components.length) ? b.components.join(', ') : '-';
+        return '<tr>' +
+            '<td class="k"><a class="jira-key-link" href="' + (b.jiraUrl || (App.jiraBaseUrl + b.bugId)) + '" target="_blank">' + b.bugId + '</a></td>' +
+            '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
+            '<td>' + SLA_NAME[s.prio] + '</td>' +
+            '<td class="n" title="从报单至今（不做 SLA 判定）">' + slaAgeText(b) + '</td>' +
+            '<td>' + (b.reporter || '-') + '</td>' +
+            '<td class="ttl" title="' + escAttr(comp) + '">' + escHtml(comp) + '</td>' +
+            '<td>' + (b.domain || '-') + '</td>' +
+            '<td>' + (noOwner ? '<span class="sla-red-text">无主</span>' : b.owner) + '</td></tr>';
+    }
+
     function rowPaused(b) {
         var s = b.sla;
         var ttl = bugTitle(b);
@@ -2081,9 +2119,9 @@ function renderSlaPanel(bugs) {
         if (ao !== bo) return ao ? -1 : 1;
         return ao ? (b.sla.fixOver - a.sla.fixOver) : (a.sla.fixRemain - b.sla.fixRemain);
     });
-    Dashboard.slaLists = { warn: warn, red: red, fix: fixRows, paused: paused, escalated: escalated };
-    Dashboard.slaRowFns = { warn: rowWarn, red: rowRed, fix: rowFix, paused: rowPaused, escalated: rowTracked };
-    Dashboard.slaPage = { warn: 1, red: 1, fix: 1, paused: 1, escalated: 1 };
+    Dashboard.slaLists = { triage: triage, warn: warn, red: red, fix: fixRows, paused: paused, escalated: escalated };
+    Dashboard.slaRowFns = { triage: rowTriage, warn: rowWarn, red: rowRed, fix: rowFix, paused: rowPaused, escalated: rowTracked };
+    Dashboard.slaPage = { triage: 1, warn: 1, red: 1, fix: 1, paused: 1, escalated: 1 };
     slaRenderAllLists();
 
     // ---- 附：四段阈值总表（PPT P4 同款，值全部取自 SLA_* 常量，避免两处口径漂移）----
@@ -2137,7 +2175,7 @@ function slaCopyRed() {
 var SLA_PAGE_SIZE = 5;
 
 function slaRenderAllLists() {
-    ['warn', 'red', 'fix', 'paused', 'escalated'].forEach(function (name) { slaRenderList(name); });
+    ['triage', 'warn', 'red', 'fix', 'paused', 'escalated'].forEach(function (name) { slaRenderList(name); });
 }
 
 function slaRenderList(name) {
@@ -2181,6 +2219,21 @@ function slaPageGo(name, delta) {
     Dashboard.slaPage = Dashboard.slaPage || {};
     Dashboard.slaPage[name] = (Dashboard.slaPage[name] || 1) + delta;
     slaRenderList(name);
+}
+
+function slaCopyTriage() {
+    var arr = (Dashboard.slaLists && Dashboard.slaLists.triage) || [];
+    if (!arr.length) { slaToast('待接单队列为空', true); return; }
+    var lines = arr.map(function (b) {
+        var s = b.sla || {};
+        var comp = (b.components && b.components.length) ? b.components.join(', ') : '-';
+        var owner = (!b.owner || /^tbd$/i.test(b.owner)) ? '无主' : b.owner;
+        return b.bugId + '\t' + SLA_NAME[s.prio] + '\t' + (s.daysOpen === null ? '-' : s.daysOpen + ' 天') + '\t' +
+            comp + '\t' + (b.reporter || '-') + '\t' + owner + '\t' + bugTitle(b);
+    });
+    var text = 'Key\t优先级\t已开\t组件\t报单人\t负责人\t标题\n' + lines.join('\n') +
+        '\n\nKeys: ' + arr.map(function (b) { return b.bugId; }).join(', ');
+    slaCopyWithFallback(text, '待接单队列（' + arr.length + ' 条）');
 }
 
 function slaCopyPaused() {

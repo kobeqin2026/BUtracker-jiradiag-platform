@@ -63,8 +63,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/kobeqin2026/enhanced-gpu-bu-daily-status-tracker.git
-cd enhanced-gpu-bu-daily-status-tracker
+git clone https://github.com/kobeqin2026/BUtracker-jiradiag-platform.git
+cd BUtracker-jiradiag-platform
 
 # 安装依赖
 npm install
@@ -93,7 +93,7 @@ http://localhost:8080
 ## 项目结构
 
 ```
-enhanced-gpu-bu-daily-status-tracker/
+BUtracker-jiradiag-platform/
 ├── public/
 │   ├── index.html              # 前端HTML骨架（569行，无内联JS/CSS）
 │   ├── jira-dashboard.html     # JIRA Bug Dashboard 独立可视化分析页面 (231行)

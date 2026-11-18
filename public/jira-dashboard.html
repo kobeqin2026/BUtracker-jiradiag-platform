@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JIRA Bug Dashboard - GPU Tracker</title>
     <link rel="stylesheet" href="/css/base.css">
-    <link rel="stylesheet" href="/css/jira-dashboard.css?v=22">
+    <link rel="stylesheet" href="/css/jira-dashboard.css?v=25">
     <link rel="stylesheet" href="/css/theme-kpi.css?v=7">
     <style id="theme-dashboard">
         /* jira-dashboard 浅色统一（白底，与 8089 Test Case Manager 同一套观感）：
@@ -595,6 +595,21 @@
 
             <div class="table-wrapper">
                 <table class="dashboard-bug-table" id="bug-table">
+                    <colgroup>
+                        <col style="width:9%">    <!-- Key -->
+                        <col style="width:18.5%"> <!-- 标题 -->
+                        <col style="width:6%">    <!-- 状态 -->
+                        <col style="width:7%">    <!-- 严重性 -->
+                        <col style="width:9.5%">  <!-- 负责人 -->
+                        <col style="width:6.5%">  <!-- Domain -->
+                        <col style="width:8.5%">  <!-- 报告日期 -->
+                        <col style="width:4.5%">  <!-- 年龄(天) -->
+                        <col style="width:4.5%">  <!-- 静默(天) -->
+                        <col style="width:8%">    <!-- 心跳 -->
+                        <col style="width:6%">    <!-- 修复SLA -->
+                        <col style="width:7.5%">  <!-- 升档 -->
+                        <col style="width:4.5%">  <!-- 智能诊断 -->
+                    </colgroup>
                     <thead>
                         <tr>
                             <th data-sort="bugId" onclick="sortBugs('bugId')">Key</th>
@@ -719,6 +734,6 @@
         #export-tbody tr:hover { background: #f7f9fc; }
     </style>
 
-    <script src="/js/jira-dashboard.js?v=95"></script>
+    <script src="/js/jira-dashboard.js?v=98"></script>
 </body>
 </html>

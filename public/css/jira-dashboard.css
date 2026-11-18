@@ -1483,3 +1483,12 @@
 
 /* 待接单（triage 队列）：队列计数用蓝灰，和告警色区分开 —— 此列不做 SLA 判定 */
 .sla-chip-triage b { color: #2563eb; }
+
+/* ── Bug 明细表：13 列定宽 + 单行省略，保证最后一列「智能诊断」不被挤出可视区 ── */
+#bug-table { table-layout: fixed; min-width: 1024px; font-size: 12.5px; }
+#bug-table th, #bug-table td { padding: 7px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#bug-table th { font-size: 12.5px; }
+#bug-table td.cell-ttl { max-width: 0; }            /* 让 colgroup 的百分比宽度生效，文本走省略号 */
+#bug-table td .sla-badge { padding: 1px 5px; font-size: 11.5px; vertical-align: middle; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+#bug-table td .status-badge, #bug-table td .severity-badge { padding: 1px 4px; font-size: 11px; vertical-align: middle; }
+#bug-table .diag-btn { padding: 1px 5px; line-height: 1.2; font-size: 12px; }

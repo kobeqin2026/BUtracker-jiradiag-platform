@@ -1,7 +1,7 @@
 # GPU Bring-up Daily Status Tracker
 
 ![GPU Issue Debug Expert](https://img.shields.io/badge/GPU%20Issue%20Debug%20Expert-blue)
-![Version](https://img.shields.io/badge/version-v6.3.1-blue)
+![Version](https://img.shields.io/badge/version-v6.3.2-blue)
 
 一个用于追踪GPU芯片Bring-up进度的Web应用，支持多项目切换、用户权限管理和实时协作。
 
@@ -357,6 +357,18 @@ var SLA_VERIFY = { highest: '1 工作日', high: '2 工作日', medium: '3 工�
 Triage 完成的标准动作（人在 JIRA 里做）：状态离开 `Opened` + 填 Assignee/Component；信息不全的单直接评论要求补料或给 `sla-needinfo` 类标签，不要让它长期留在队列里。
 
 ## 版本历史
+
+### v6.3.2 (2026-11-18)
+**Bug 明细表最后一列「智能诊断」溢出可视区修复（13 列改定宽 + 单行省略）**
+
+- 根因：`table-layout: auto` 下 13 列自然宽度合计 1322px，而 1280 视口下容器仅 1174px，表格比容器宽 148px → 最后一列被推到可视区外
+- `#bug-table` 加 `<colgroup>`（13 列百分比合计 100%）+ `table-layout: fixed`，表格宽度恒等于容器
+- 列宽重算：Key 9 / 标题 18.5 / 状态 6 / 严重性 7 / 负责人 9.5 / Domain 6.5 / 报告日期 8.5 / 年龄 4.5 / 静默 4.5 / 心跳 8 / 修复SLA 6 / 升档 7.5 / 智能诊断 4.5（%）
+- 表格字体 13→12.5px、单元格内边距 12px→8px、状态/严重性徽章 11px、SLA 徽章 11.5px
+- 全部单元格单行 + 省略号；标题/负责人/Domain 带 `title` 悬停看全文（标题去掉内联 `maxWidth:300px` 改 class）
+- 升档徽章缩短（`已升档(Medium)`→`已升档`、`到顶·升级到人`→`到顶`），完整含义移到悬停提示
+- 保留 `min-width:1024px`，窗口更窄时由 `.table-wrapper` 横向滚动兜底
+- 实测（1280 视口 / 34 行）：表格 1174 = 容器 1174，无横向滚动；最右列右边界 = 容器右边界，34 个 🔍 按钮全部可点；仅标题/负责人/Domain 三列文本走省略号
 
 ### v6.3.1 (2026-11-18)
 **① 首次响应改为人工 triage + 新增「待接单（triage 队列）」**
@@ -1869,4 +1881,4 @@ MIT License
 ---
 
 **最后更新**: 2026年8月27日  
-**版本**: 6.3.1
+**版本**: 6.3.2

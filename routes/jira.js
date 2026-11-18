@@ -491,6 +491,237 @@ router.post('/bug-debug-progress/summarize', auth.authenticateToken, async funct
     }
 });
 
+// ============================================================
+// 批量 LLM 归纳 Debug Progress —— 供 jira-dashboard「导出Bug明细」用
+// (2026-11-04) 逐 bug 抓 JIRA 最新评论 → LLM 归纳成一句话进展,
+// 带内存缓存(评论未变则直接复用), 4 并发控制, 单条失败不影响整批。
+// ============================================================
+var bugProgressCache = new Map();          // key -> {lastCommentId, summary, lastCommentDate, commentCount, updatedAt}
+var BUG_PROGRESS_CACHE_TTL = 30 * 60 * 1000;
+var BUG_PROGRESS_CONCURRENCY = 4;
+var BUG_PROGRESS_MAX_COMMENTS = 15;        // 只喂最近 15 条评论, 控制单次 prompt 体量
+var BUG_PROGRESS_MAX_CHARS = 8000;         // 评论正文总字符上限
+
+function jiraBaseOptions(authHeader) {
+    var parsedUrl = url.parse(jiraConfig.baseUrl);
+    return {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+        protocol: parsedUrl.protocol,
+        method: 'GET',
+        headers: {
+            'Authorization': authHeader,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        },
+        rejectUnauthorized: false
+    };
+}
+
+/**
+ * 抓某个 bug 的最近评论（+ 供 LLM 参考的标题/描述由调用方给出）
+ * @returns {Promise<{comments:Array, lastCommentId:string, lastCommentDate:string, issueSummary:string}>}
+ */
+async function fetchBugCommentsForProgress(authHeader, jiraKey, needIssueFields) {
+    var base = jiraBaseOptions(authHeader);
+    var issueSummary = '';
+    if (needIssueFields) {
+        var issueData = await makeRequest(Object.assign({}, base, {
+            path: '/rest/api/2/issue/' + encodeURIComponent(jiraKey) + '?fields=summary'
+        }));
+        issueSummary = (issueData && issueData.fields && issueData.fields.summary) || '';
+    }
+    var commentData = await makeRequest(Object.assign({}, base, {
+        path: '/rest/api/2/issue/' + encodeURIComponent(jiraKey) + '/comment?maxResults=100&orderBy=created'
+    }));
+    var raw = (commentData && Array.isArray(commentData.comments)) ? commentData.comments : [];
+    var picked = raw.slice(-BUG_PROGRESS_MAX_COMMENTS);
+    var total = 0;
+    var comments = [];
+    for (var i = 0; i < picked.length; i++) {
+        var c = picked[i];
+        var body = c.body || '';
+        if (total + body.length > BUG_PROGRESS_MAX_CHARS) {
+            body = body.substring(0, Math.max(0, BUG_PROGRESS_MAX_CHARS - total));
+        }
+        total += body.length;
+        comments.push({
+            created: (c.created || '').split('T')[0],
+            author: c.author ? (c.author.displayName || c.author.name || '') : '',
+            body: body
+        });
+    }
+    var last = raw.length ? raw[raw.length - 1] : null;
+    return {
+        comments: comments,
+        commentCount: raw.length,
+        lastCommentId: last ? String(last.id) : '',
+        lastCommentDate: last ? (last.created || '').split('T')[0] : '',
+        issueSummary: issueSummary
+    };
+}
+
+async function summarizeOneBugProgress(authHeader, item, force) {
+    var jiraKey = item.key;
+    var info = await fetchBugCommentsForProgress(authHeader, jiraKey, !item.summary);
+    var summaryText = item.summary || info.issueSummary || '';
+
+    if (!info.comments.length) {
+        return { key: jiraKey, summary: '', noComments: true, commentCount: 0,
+                 lastCommentDate: '', cached: false };
+    }
+
+    // 评论未变 + 未过期 → 直接复用
+    var cached = bugProgressCache.get(jiraKey);
+    if (!force && cached && cached.lastCommentId === info.lastCommentId &&
+        (Date.now() - cached.updatedAt) < BUG_PROGRESS_CACHE_TTL) {
+        return { key: jiraKey, summary: cached.summary, noComments: false,
+                 commentCount: info.commentCount, lastCommentDate: cached.lastCommentDate,
+                 cached: true };
+    }
+
+    var result = await diagnosis.summarizeDebugProgress(
+        jiraKey, summaryText, info.comments, item.description || '', ''
+    );
+    var summary = (result && result.summary) ? String(result.summary).trim() : '';
+    bugProgressCache.set(jiraKey, {
+        lastCommentId: info.lastCommentId,
+        summary: summary,
+        lastCommentDate: info.lastCommentDate,
+        commentCount: info.commentCount,
+        updatedAt: Date.now()
+    });
+    return { key: jiraKey, summary: summary, noComments: false,
+             commentCount: info.commentCount, lastCommentDate: info.lastCommentDate,
+             cached: false };
+}
+
+/**
+ * POST /api/data/bug-debug-progress/batch
+ * Body: { items: [{key, summary?, description?}], force?: bool }
+ *   items 也接受 [{key}] 或 { keys: [...] }
+ * 返回: { success, results: { KEY: {summary, noComments, commentCount, lastCommentDate, cached, error?} }, stats }
+ */
+/**
+ * POST /api/data/bug-details-export
+ * Body: { groups: [{ name, rows: [{key, description, priority, component, assignee, progress}] }], filename? }
+ * 每组一个 worksheet（Excel 底部就是两个 tab），列固定为:
+ * Index / JIRA ID / Description / Priority / Component / Assignee / Debug Progress
+ * 返回 xlsx 二进制（Content-Disposition: attachment）
+ */
+router.post('/bug-details-export', auth.authenticateToken, function(req, res) {
+    try {
+        var XLSX = require('xlsx');
+        var body = req.body || {};
+        var groups = Array.isArray(body.groups) ? body.groups : [];
+        if (!groups.length) {
+            return res.status(400).json({ success: false, error: '没有可导出的分组' });
+        }
+        var headers = ['Index', 'JIRA ID', 'Description', 'Priority', 'Component', 'Assignee', 'Debug Progress'];
+        var wb = XLSX.utils.book_new();
+        groups.forEach(function(g) {
+            var sheetName = String(g.name || 'Sheet')
+                .replace(/[\\\/\?\*\[\]:]/g, '_')
+                .substring(0, 31) || 'Sheet';
+            var aoa = [headers];
+            (g.rows || []).forEach(function(r, i) {
+                aoa.push([
+                    i + 1,
+                    r.key || '',
+                    r.description || '',
+                    r.priority || '',
+                    r.component || '',
+                    r.assignee || '',
+                    r.progress || ''
+                ]);
+            });
+            var ws = XLSX.utils.aoa_to_sheet(aoa);
+            ws['!cols'] = [{ wch: 6 }, { wch: 14 }, { wch: 62 }, { wch: 10 }, { wch: 14 }, { wch: 24 }, { wch: 90 }];
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        });
+        var buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+        var d = new Date();
+        var pad = function(n) { return ('0' + n).slice(-2); };
+        var ascii = 'JIRA-Bug-details-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-'
+            + pad(d.getHours()) + pad(d.getMinutes()) + '.xlsx';
+        var cn = body.filename ? String(body.filename).replace(/[^\w\u4e00-\u9fa5\.\-]/g, '_') : ascii;
+        res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.set('Content-Disposition', 'attachment; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(cn));
+        res.set('Cache-Control', 'no-store');
+        res.send(buf);
+    } catch (e) {
+        console.error('[BugDetailsExport] failed:', e.message);
+        res.status(500).json({ success: false, error: '生成 Excel 失败: ' + e.message });
+    }
+});
+
+router.post('/bug-debug-progress/batch', auth.authenticateToken, async function(req, res) {
+    try {
+        var authHeader = getAuthHeader();
+        if (!authHeader) {
+            return res.status(500).json({ success: false, error: 'JIRA认证未配置' });
+        }
+
+        var body = req.body || {};
+        var items = Array.isArray(body.items) ? body.items
+            : (Array.isArray(body.keys) ? body.keys.map(function(k) { return { key: k }; }) : []);
+        var force = body.force === true;
+
+        items = items.filter(function(it) {
+            return it && /^[A-Za-z0-9]+-\d+$/.test(String(it.key || ''));
+        }).map(function(it) {
+            return { key: String(it.key), summary: it.summary || '', description: it.description || '' };
+        });
+        // 去重
+        var seen = {};
+        items = items.filter(function(it) {
+            if (seen[it.key]) return false;
+            seen[it.key] = true;
+            return true;
+        });
+        items = items.slice(0, 200);
+
+        if (!items.length) {
+            return res.status(400).json({ success: false, error: '没有有效的 JIRA Key' });
+        }
+
+        var results = {};
+        var stats = { total: items.length, summarized: 0, cached: 0, noComments: 0, failed: 0 };
+        var cursor = 0;
+        var startedAt = Date.now();
+
+        async function worker() {
+            while (cursor < items.length) {
+                var item = items[cursor++];
+                try {
+                    var r = await summarizeOneBugProgress(authHeader, item, force);
+                    results[r.key] = r;
+                    if (r.noComments) stats.noComments++;
+                    else if (r.cached) stats.cached++;
+                    else stats.summarized++;
+                } catch (e) {
+                    console.error('[BugProgressBatch] ' + item.key + ' 失败: ' + e.message);
+                    results[item.key] = { key: item.key, summary: '', error: e.message };
+                    stats.failed++;
+                }
+            }
+        }
+
+        var workers = [];
+        for (var w = 0; w < Math.min(BUG_PROGRESS_CONCURRENCY, items.length); w++) {
+            workers.push(worker());
+        }
+        await Promise.all(workers);
+
+        stats.elapsedMs = Date.now() - startedAt;
+        console.log('[BugProgressBatch] ' + JSON.stringify(stats));
+        res.json({ success: true, results: results, stats: stats });
+    } catch (error) {
+        console.error('Bug progress batch error: ' + error.message);
+        res.status(500).json({ success: false, error: '批量归纳调试进展失败: ' + error.message });
+    }
+});
+
 /**
  * GET /api/data/jira-projects
  * Fetches all projects from JIRA
@@ -716,6 +947,10 @@ router.post('/jira-dashboard', auth.authenticateToken, async function(req, res) 
             });
         }
 
+        // 每次请求都实时回源 JIRA，禁止任何浏览器/代理缓存（前端自动刷新 30 分钟一次）
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
         res.json({
             success: true,
             bugs: allBugs,
@@ -724,6 +959,7 @@ router.post('/jira-dashboard', auth.authenticateToken, async function(req, res) 
             total: allBugs.length,
             project: project,
             projects: projects,
+            fetchedAt: new Date().toISOString(),
             message: '成功获取 ' + allBugs.length + ' 条Bug数据'
         });
 
@@ -984,8 +1220,10 @@ function computeChartData(bugs) {
     var severityCount = { highest: 0, high: 0, medium: 0, low: 0, lowest: 0 };
     // Severity distribution (未关闭/open only)
     var severityOpenCount = { highest: 0, high: 0, medium: 0, low: 0, lowest: 0 };
-    // Owner distribution
+    // Owner distribution (total)
     var ownerCount = {};
+    // Owner distribution (未关闭/open only)
+    var ownerOpenCount = {};
     // Domain distribution
     var domainCount = {};
     // Component distribution
@@ -1012,6 +1250,11 @@ function computeChartData(bugs) {
         // Owner
         var owner = bug.owner || 'TBD';
         ownerCount[owner] = (ownerCount[owner] || 0) + 1;
+        // Owner 未关闭 (= 非 closed/rejected/done)
+        var _ownSt = String(bug.status || '').toLowerCase();
+        if (_ownSt !== 'closed' && _ownSt !== 'rejected' && _ownSt !== 'done') {
+            ownerOpenCount[owner] = (ownerOpenCount[owner] || 0) + 1;
+        }
 
         // Domain
         var domain = bug.domain || 'TBD';
@@ -1058,6 +1301,14 @@ function computeChartData(bugs) {
         return { owner: o, count: ownerCount[o] };
     });
 
+    // Sort owner (未关闭) by count descending; 只保留未关闭数 > 0 的负责人
+    var ownerOpenArray = Object.keys(ownerOpenCount)
+        .filter(function(o) { return ownerOpenCount[o] > 0; })
+        .sort(function(a, b) { return ownerOpenCount[b] - ownerOpenCount[a]; })
+        .map(function(o) {
+            return { owner: o, count: ownerOpenCount[o], total: ownerCount[o] || 0 };
+        });
+
     // Sort domain by count descending
     var domainArray = Object.keys(domainCount).sort(function(a, b) { return domainCount[b] - domainCount[a]; }).map(function(d) {
         return { domain: d, count: domainCount[d] };
@@ -1078,6 +1329,7 @@ function computeChartData(bugs) {
         severityCount: severityCount,
         severityOpenCount: severityOpenCount,
         ownerCount: ownerArray,
+        ownerOpenCount: ownerOpenArray,
         domainCount: domainArray,
         componentCount: componentArray,
         rootCauseCount: rootCauseArray,
@@ -1266,8 +1518,17 @@ router.post('/diagnose-bug', auth.authenticateToken, async function(req, res) {
                 bugInfo.description = (bugInfo.description || '') + '\n\n**截图实时分析（本次诊断时调用VLM）**:\n' + newText;
                 console.log('[VisionRealtime] Source bug', bugInfo.key + ':', realtimeResults.length, 'images analyzed in real-time');
             }
-            // Clear unanalyzed list since they are now analyzed (or attempted)
-            bugInfo.unanalyzedImages = [];
+            // 只有真正分析出结果才清空待分析列表；全部失败(VLM 不可用)时保留，
+            // 让前端如实显示「待分析」，而不是假装分析过却什么都没有
+            if (realtimeResults.length > 0) {
+                bugInfo.unanalyzedImages = [];
+            } else {
+                var vlmStatus = visionAnalysis.getVlmStatus ? visionAnalysis.getVlmStatus() : null;
+                console.warn('[VisionRealtime] Source bug ' + bugInfo.key + ': 全部图片分析失败' +
+                    (vlmStatus && vlmStatus.down ? '，VLM 已熔断 ' +
+                        Math.round(vlmStatus.cooldownRemainMs / 60000) + ' 分钟（' + vlmStatus.lastReason + '）' : '') +
+                    '，保留 ' + bugInfo.unanalyzedImages.length + ' 张为待分析');
+            }
             console.log('[VisionRealtime] Source bug', bugInfo.key + ':', bugInfo.imageSummaries.length, 'analyzed,', bugInfo.unanalyzedImages.length, 'still pending');
         }
 

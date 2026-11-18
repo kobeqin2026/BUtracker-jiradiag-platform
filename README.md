@@ -1,7 +1,7 @@
 # GPU Bring-up Daily Status Tracker
 
 ![GPU Issue Debug Expert](https://img.shields.io/badge/GPU%20Issue%20Debug%20Expert-blue)
-![Version](https://img.shields.io/badge/version-v6.2.0-blue)
+![Version](https://img.shields.io/badge/version-v6.3.0-blue)
 
 一个用于追踪GPU芯片Bring-up进度的Web应用，支持多项目切换、用户权限管理和实时协作。
 
@@ -30,6 +30,7 @@
 - **测试用例进度列 (Domain Overview)**: 从 JIRA 顶层 Test Plan 树实时聚合各 Domain 测试用例（通过/失败/执行中/未执行/豁免），进度条 + done/total 数字展示
 - **Domain 状态自动一致 (准出标准驱动)**: 全部 Pass 自动 Completed 并记录 BU 准出时间，解除后自动回退，不覆盖手动状态
 - **JIRA Bug Dashboard**: 独立可视化页面（`/jira-dashboard.html`），提供JIRA Bug统计与分析
+- **软件 Bug SLA（阶段1 · 只读建议）**: 在 JIRA Bug Dashboard 上按「首次响应 / 持续响应心跳 / 修复完成 / 验证关闭」四段口径判定每条 Bug，输出黄牌 / 红牌 / 修复超期 / 挂起 / 已升档五张清单（每页 5 条，可一键复制成 JIRA 批量操作清单），只读不改 JIRA；标签协议 `sla-paused` / `sla-escalated` / `sla-from-<原档>` 见「软件 Bug SLA」章节
 
 ### 技术特性
 - [API 文档](API.md)
@@ -189,7 +190,186 @@ enhanced-gpu-bu-daily-status-tracker/
 - `POST /api/data/jira-dashboard` - 获取 Dashboard 聚合数据（stats + charts + bugs 数组，自动缓存快照）
 - `GET /api/data/jira-dashboard-history/:project` - 获取历史快照数据用于趋势分析
 
+## 软件 Bug SLA（阶段1：只读建议）
+
+面向「Bug 越积越多、没人持续推动」的场景，在 JIRA Bug Dashboard 上增加一层 **SLA 判定 + 清单化治理**能力。
+**阶段1 是只读的**：看板只计算并给出建议（谁该被催、谁该升到哪一档、哪些已破线），**不改写任何 JIRA 数据**；改优先级、打标签仍由人在 JIRA 里执行（周会批量做，看板提供「复制清单」直接贴进 JIRA）。
+
+### 1. 四段口径
+
+| 段 | 含义 | 计时口径 | Highest | High | Medium | Low |
+|---|---|---|---|---|---|---|
+| ① 首次响应 | 报单 → 首次接单（离开 Opened） | 工作小时 / 工作日（08:00–17:00，不含周末） | 4 工作小时 | 1 工作日 | 2 工作日 | 5 工作日 |
+| ② 持续响应（心跳） | 未关闭期间，任意两次有效活动之间的最长间隔 | 自然日（含周末） | 2 天（红线 4 天） | 3 天（红线 6 天） | 7 天（红线 14 天） | 14 天（红线 28 天） |
+| ③ 修复完成 | 报单 → Resolved / Fixed | 自然日（含周末） | 7 天 | 14 天 | 30 天 | 60 天 |
+| ④ 验证关闭 | Resolved → Closed | 工作日 | 1 工作日 | 2 工作日 | 3 工作日 | 5 工作日 |
+
+**阶段1 界面上实际落地的是 ②③ 两段**：①④ 需要 JIRA changelog / 状态流转历史，而 `/api/data/jira-dashboard` 返回的 payload 里只有 `created`（映射为 `reportDate`）与 `updated`（`updatedDate`），没有首次响应时间与关闭时间。表格保留 ①④ 是为了口径完整、与团队提案（PPT P4）保持一致，后续可从 changelog 补齐。
+
+### 2. 判定量：全部在前端算，后端零改动
+
+```js
+// public/js/jira-dashboard.js —— 三个阈值常量，改口径只改这里
+var SLA_FIX  = { highest: 7, high: 14, medium: 30, low: 60 };              // ③ 修复完成（自然日）
+var SLA_CAD  = { highest: 2, high: 3, medium: 7, low: 14 };               // ② 心跳 1×（自然日）；红线 = 2×
+var SLA_NEXT = { low: 'medium', medium: 'high', high: 'highest', highest: null };  // 升档链，highest 到顶
+
+var SLA_FIRST  = { highest: '4 工作小时', high: '1 工作日', medium: '2 工作日', low: '5 工作日' };  // ① 仅用于阈值表展示
+var SLA_VERIFY = { highest: '1 工作日', high: '2 工作日', medium: '3 工作日', low: '5 工作日' };    // ④ 仅用于阈值表展示
+```
+
+`slaOf(bug)` 对每条 Bug 产出下面这些量（结果挂在 `bug.sla` 上，供清单/明细表/排序共用）：
+
+| 字段 | 计算方式 | 说明 |
+|---|---|---|
+| `daysOpen` | `today − reportDate` | 已开天数（`reportDate` 即 JIRA `created`，日期精度） |
+| `silent` | `today − updatedDate` | 静默天数；`updatedDate` 缺失时回退 `reportDate`，避免被判成"永远静默" |
+| `cadence` | `SLA_CAD[priority]` | 心跳 1×，红线 = `2 × cadence` |
+| `fixTarget` | `SLA_FIX[priority]` | 修复窗口 |
+| `fixRemain` / `fixOver` | `fixTarget − daysOpen` / `max(0, daysOpen − fixTarget)` | 剩 N 天 / 超 N 天 |
+| `paused` | `labels` 含 `sla-paused` | 挂起 |
+| `escalated` / `escFrom` | `labels` 含 `sla-escalated` / `sla-from-<原档>` | 已升档 + 原档（用于显示 `Medium → High`） |
+| `warn` | `silent > cadence` 且未到红线、未挂起、未关闭 | 黄牌 |
+| `red` | `silent > 2 × cadence` 且未挂起、未关闭 | 红牌（违约） |
+| `shouldEscalate` | `red` 且未升过档、且存在下一档 | 需要人去 JIRA 升一档 |
+| `atTop` | `red` 且已是 Highest、未升过档 | 到顶，改「升级到人」(owner → PM) |
+
+判定要点：
+
+- **严格大于**（`>`）而不是 `>=`：静默正好等于心跳那天不算违约，第 N+1 天才触发，避免为"卡点当天动了一下"扯皮。
+- **黄牌与红牌互斥**：`warn` 里排除 `red`，所以 `黄牌数 + 红牌数 = 停滞总数`。
+- **挂起只暂停心跳**：`paused` 只影响 `warn` / `red`，不影响 `daysOpen` / `fixOver`（修复 SLA 照走）。原因见「已知限制」。
+
+### 3. 五张清单与分页
+
+面板结构（自上而下）：
+
+```
+统计 chips：黄牌 / 红牌 / 修复超期(临期 N) / 挂起 / 已升档
+① 黄牌清单      静默 > 1× 心跳（只提醒，不升档）
+② 红牌清单      静默 > 2× 心跳 = 违约，处理建议列直接给档位（→ High（升一档）/ 到顶·升级到人 / 已升档）
+③ 修复超期清单   已开 > 修复 SLA，前段按超期天数降序、后段是临期（窗口用掉 ≥80%）按剩余升序
+④ 挂起清单       labels 含 sla-paused
+⑤ 已升档清单     labels 含 sla-escalated，看升档后是否又在睡
+四段阈值总表     上面第 1 节的四段口径
+```
+
+实现方式：
+
+- 每页固定 **5 条**（`SLA_PAGE_SIZE`）。渲染函数 `slaRenderPanel()` 只负责**算一次**，把五组数组与行渲染器缓存到 `Dashboard.slaLists` / `Dashboard.slaRowFns`，然后交给 `slaRenderAllLists()`；
+- 翻页走 `slaPageGo(name, ±1)` → `slaRenderList(name)`，**只重渲染该清单，不重算 SLA**，页码缓存在 `Dashboard.slaPage`；
+- 页码越界自动夹取到末页；每次数据刷新（重新取数）页码统一重置为 1，避免刷新后停在空页；
+- 只有 1 页时不显示翻页按钮，只显示「共 N 条」。
+
+行渲染器与列：
+
+| 清单 | 列 |
+|---|---|
+| 黄牌 / 挂起 | Key、标题、优先级、静默(天)、已开/修复SLA、Domain、负责人 |
+| 红牌 | Key、标题、优先级、静默(天)、处理建议、Domain、负责人 |
+| 修复超期 | Key、标题、优先级、已开 / 修复SLA（`74 / 30 · 超 44 天`）、静默(天)、Domain、负责人 |
+| 已升档 | Key、原档 → 现档、静默(天)、当前心跳、Domain、负责人 |
+
+### 4. 「复制清单」与剪贴板兜底
+
+每个清单右上角有「复制清单」，导出的文本同时满足两种用法：前段是 **TSV**（可直接粘进 Excel / 周会表格），末行是 `Keys: PROJ-1, PROJ-2`（可直接粘进 JIRA issue navigator 做批量操作）。
+
+复制链路做了**三层兜底**（很多内网部署是 http 明文，`window.isSecureContext === false`，此时 `navigator.clipboard` 根本不存在）：
+
+1. 安全上下文（https / localhost）→ `navigator.clipboard.writeText`；
+2. 明文 http → 隐藏 `textarea` + `document.execCommand('copy')`；
+3. 两者都失败 → 页面自带面板：`textarea` 预选中 + 「再试一次自动复制」，用户按 `Ctrl+C` 一定能复制。
+
+反馈用页面内 toast（2.6s 自动消失），**不使用 `alert` / `prompt`**——prompt 在部分环境被拦截且静默失败，表现为"点了没反应"。
+
+### 5. 标签协议（人在 JIRA 里维护）
+
+| 标签 | 作用 | 配套要求 |
+|---|---|---|
+| `sla-paused` | 挂起：心跳静默不计、不黄不红、不升档 | 必须补评论写清「等谁、等什么、什么时候回来」；挂起 > 7 天要 review；挂起 > 2× 心跳未解除视为解除并升档 |
+| `sla-escalated` | 已升档标记，进入「已升档清单」追踪 | 与 `sla-from-<原档>` 一起打 |
+| `sla-from-<原档>` | 记录升档前档位，用于显示 `Medium → High`；缺失时显示 `? → High` | 与原档名一致（`highest` / `high` / `medium` / `low`） |
+
+标签匹配大小写不敏感。**删掉标签即从清单消失**（看板不保存历史）。
+注意：如果只在 JIRA 改了 Priority 却没打 `sla-escalated`，看板会按新优先级继续算心跳，但**不会**出现在「已升档清单」里。
+
+### 6. 数据来源与刷新链路
+
+```
+页面 fetchDashboardData()
+  → POST /api/data/jira-dashboard            （cache: no-store）
+  → 后端 fetchJiraBugs(authHeader, jql)      （每次实时查 JIRA，不读本地缓存，同时 cacheSnapshot 存快照）
+  → Dashboard.allBugs = data.bugs
+  → Dashboard.dataFetchedAt = new Date()     （面板标题显示"数据截至"）
+  → slaDecorate(allBugs)                     逐条算 bug.sla
+  → renderSlaPanel(allBugs)                  重算五组清单 + 重渲染 + 页码重置
+```
+
+- 触发时机：打开/刷新页面、手动刷新、同步 JIRA、**自动刷新定时器（默认 30 分钟，可切 15/30/60/关闭）**；改筛选只重渲染不重新取数。
+- 面板标题会显示 `数据截至 MM-DD HH:MM`（`slaFmtTime()` 零填充格式化），避免截图被别人误当成实时数据。
+- **静默天数是用渲染那一刻的日期算的**：自动刷新关掉、页面整夜挂着，数字不会自己走，需要手动刷新。
+
+### 7. 只读边界（为什么不自动写 JIRA）
+
+阶段1 的设计约束：看板只读，**代码里没有任何对 JIRA 的写操作**（无 POST/PUT/PATCH 到 JIRA，只有查询）。
+原因：改优先级属于业务决策，需要 owner / PM 认账；自动化一旦误判（例如挂起没打标签的单被连升两级）会污染优先级体系。因此升档动作固化在周会 10 分钟里批量执行，看板负责把"该动谁"算准。
+
+阶段2（自动化）前提：服务账号写权限、幂等保护（靠 `sla-escalated` 去重）、自动评论留痕、误升回滚脚本——需单独评审后再开。
+
+### 8. 与其他指标的关系
+
+| 指标 | 公式 | 看什么 |
+|---|---|---|
+| SLA 达标率（关闭口径） | 期间关闭且用时 ≤ 修复阈值的单 ÷ 期间关闭总数 | 流程是否在改善（按优先级分别报） |
+| 存量超期率 | 超期未关闭 ÷ 未关闭 | 历史包袱有多重 |
+| 停滞率（心跳） | 当前静默 > 心跳的未关闭 ÷ 未关闭 | 有没有人接手（过程指标） |
+
+**达标率与存量超期率必须并列展示、不要合并成一个"合规率"**：前者衡量新单响应、后者衡量历史库存，天然一高一低。
+
+### 9. 已知限制
+
+- **日期精度**：`updated` 只有日期没有时刻，静默是整数天；"当天动过"与"当天 23:59 动过"不可区分。
+- **无 changelog**：因此拿不到「最长静默」「升档时刻」「首次响应时间」；「已升档清单」里的静默是"当前静默"，不是"升档后静默"。
+- **挂起只暂停心跳**：修复窗口（已开天数）照走。这样避免用挂起洗超期；代价是等硬件数月的单会一直显示修复超期（属预期，需人工判断）。
+- **一次性读完**：`/api/data/jira-dashboard` 有 `maxResults` 上限，超大项目需分页/分项目拉取。
+
+### 10. 后续可做
+
+1. 抓 JIRA changelog → 补 ①首次响应、最长静默、心跳违约次数、升档时刻；
+2. 「挂起」也暂停修复窗口（配"挂起有效期 2× 心跳自动解除"）；
+3. 用历史快照对比 Priority 变化，**自动识别升档**（不依赖 `sla-escalated`），label 作为兜底；
+4. 阶段2：服务账号幂等写回 JIRA（升档 + 自动评论），需评审。
+
 ## 版本历史
+
+### v6.3.0 (2026-11-18)
+**软件 Bug SLA 阶段1：只读建议面板（四段口径 + 五张清单 + 翻页 + 一键复制）**
+
+#### 📐 四段口径与判定引擎
+- 新增 `slaOf()` / `slaDecorate()`：按 `reportDate` / `updatedDate` / `labels` 纯前端算出每条 Bug 的静默天数、心跳黄线（1×）红线（2×）、修复剩余/超期、挂起与已升档状态
+- 阈值常量集中：`SLA_FIX`(7/14/30/60 天)、`SLA_CAD`(2/3/7/14 天)、`SLA_NEXT`(升档链，Highest 到顶)；改口径只改常量
+- 判定用**严格大于**，黄牌与红牌互斥；挂起（`sla-paused`）只暂停心跳，不暂停修复窗口
+
+#### 📋 五张清单（每页 5 条）
+- 黄牌清单（静默 > 1× 心跳，只提醒）/ 红牌清单（> 2× 心跳 = 违约，处理建议列直接给档位）/ 修复超期清单（已超期降序 + 临期升序）/ 挂起清单 / 已升档清单
+- 分页由 `SLA_PAGE_SIZE` + `slaRenderList()` 实现：清单数据与行渲染器缓存在 `Dashboard.slaLists` / `slaRowFns`，翻页只重渲染单清单不重算 SLA；数据刷新页码重置；越界自动夹取；单页不显示按钮
+- 明细表新增 4 列（静默 / 心跳徽章 / 修复SLA / 升档建议）并支持 `sla.*` 排序
+
+#### 📋 一键复制（三层剪贴板兜底）
+- Clipboard API → 隐藏 textarea + `execCommand('copy')` → 页面自带面板（预选中 + 再试一次）
+- 修复 http 明文部署下 `navigator.clipboard` 不存在、旧实现退回 `window.prompt()` 被拦截导致"点了没反应"的问题
+- 导出文本 = TSV（周会表格用）+ 末尾 `Keys:` 行（JIRA 批量操作用）
+
+#### 🏷 标签协议
+- `sla-paused` 挂起（静默不计、不升档）、`sla-escalated` + `sla-from-<原档>` 记录升档（「已升档清单」追踪），大小写不敏感，删标签即从清单消失
+
+#### 🕐 数据新鲜度
+- 面板标题显示「数据截至 MM-DD HH:MM」（`Dashboard.dataFetchedAt` + `slaFmtTime()`），避免截图被误认为实时
+- 明细行/清单行补充悬停说明（静默口径、心跳黄/红线、修复剩余/超期）
+
+#### 🧹 去敏与清理
+- 导出面板里硬编码的内网 JIRA 域名改为运行时 `App.jiraBaseUrl`（由 `JIRA_BASE_URL` 注入），公开仓不含内网地址
+- 下线重复信息：顶部按优先级的阈值说明、面板页脚三条说明、阈值表下两条说明（内容并入「四段阈值总表」与章节文档）
 
 ### v6.2.0 (2026-10-21)
 **项目 Stage1/Stage2 退出数据固化归档 / sessions 30 秒空写刷盘修复 / 归档脚本化**
@@ -1662,4 +1842,4 @@ MIT License
 ---
 
 **最后更新**: 2026年8月27日  
-**版本**: 6.0.0
+**版本**: 6.3.0

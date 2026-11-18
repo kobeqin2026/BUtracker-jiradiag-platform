@@ -1312,3 +1312,171 @@
         max-width: 100%;
     }
 }
+
+/* ===== 按负责人分布 A(横向堆叠条) + B(可排序表格) — 2026-11-11 ===== */
+#owner-chart-wrapper { height: 280px; }
+.owner-chart-scroll { max-height: 520px; overflow-y: auto; overflow-x: hidden; }
+.owner-chart-scroll::-webkit-scrollbar { width: 8px; }
+.owner-chart-scroll::-webkit-scrollbar-thumb { background: #2a3350; border-radius: 4px; }
+.owner-chart-scroll::-webkit-scrollbar-track { background: transparent; }
+.owner-rest-note {
+    font-size: 11.5px; color: #8b93a7; line-height: 1.5;
+    margin: 6px 2px 2px; padding: 6px 8px;
+    background: rgba(255,255,255,.03); border-left: 2px solid #2a3350; border-radius: 4px;
+}
+.owner-table-wrap { margin-top: 8px; }
+.owner-table-toolbar { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; flex-wrap: wrap; }
+.owner-table-toolbar .filter-input { flex: 1 1 180px; min-width: 140px; }
+.owner-tbl-count { font-size: 11.5px; color: #8b93a7; white-space: nowrap; }
+.owner-table-scroll { max-height: 340px; overflow: auto; border: 1px solid #2a3350; border-radius: 8px; }
+.owner-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.owner-table thead th {
+    position: sticky; top: 0; z-index: 2; cursor: pointer; user-select: none;
+    background: #1d2436; color: #c9d2e3; font-weight: 600;
+    padding: 7px 8px; border-bottom: 1px solid #2a3350; white-space: nowrap;
+}
+.owner-table thead th:hover { color: #fff; background: #223052; }
+.owner-table tbody td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.05); color: #e6e9f2; }
+.owner-table tbody tr { cursor: pointer; }
+.owner-table tbody tr:hover { background: rgba(79,140,255,.10); }
+.owner-table tbody tr.owner-only-closed td { opacity: .66; }
+.owner-cell-open { color: #ff5c5c; font-weight: 700; }
+.owner-domain-cell { color: #8b93a7; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.owner-bar-track {
+    display: inline-block; vertical-align: middle; height: 9px; min-width: 40px;
+    background: rgba(149,165,166,.35); border-radius: 5px; overflow: hidden;
+}
+.owner-bar-fill {
+    height: 100%; border-radius: 5px 0 0 5px;
+    background: linear-gradient(90deg, #ff5c5c, #ff9f43);
+}
+.owner-pct-txt { font-size: 11px; color: #8b93a7; margin-left: 6px; vertical-align: middle; }
+.owner-table-hint { font-size: 11px; color: #6f7789; margin-top: 6px; }
+
+/* ===== 按负责人分布 三视图(图表/卡片/表格) + 顶部汇总 KPI — 2026-11-11 第三版 ===== */
+.owner-view-tabs { display: inline-flex; gap: 2px; background: rgba(255,255,255,.04); border: 1px solid #2a3350; border-radius: 8px; padding: 2px; }
+.owner-tab {
+    background: transparent; border: 0; color: #8b93a7; font-size: 12px; line-height: 1;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: all .12s ease;
+}
+.owner-tab:hover { color: #e6e9f2; }
+.owner-tab.active { background: linear-gradient(135deg, #4f8cff, #6a5cff); color: #fff; font-weight: 600; }
+
+.owner-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 10px 0 4px; }
+.owner-sum {
+    background: rgba(255,255,255,.03); border: 1px solid #2a3350; border-radius: 8px;
+    padding: 8px 10px; text-align: left; overflow: hidden;
+}
+.owner-sum b { display: block; font-size: 22px; line-height: 1.15; color: #ff9f43; font-weight: 700; }
+.owner-sum b.os-name { font-size: 15px; color: #e6e9f2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.owner-sum b i { font-style: normal; font-size: 13px; color: #8b93a7; font-weight: 400; }
+.owner-sum span { display: block; font-size: 11px; color: #8b93a7; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.owner-more { font-size: 11.5px; margin: 6px 2px 0; }
+.owner-more a { color: #4f8cff; text-decoration: none; }
+.owner-more a:hover { text-decoration: underline; }
+
+.owner-cards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; max-height: 460px; overflow-y: auto; padding-right: 2px; }
+.owner-card {
+    background: linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+    border: 1px solid #2a3350; border-radius: 10px; padding: 9px 10px; cursor: pointer;
+    transition: border-color .12s ease, transform .12s ease;
+}
+.owner-card:hover { border-color: #4f8cff; transform: translateY(-1px); }
+.owner-card.oc-dim { opacity: .58; }
+.owner-card .oc-name { font-size: 12px; color: #c9d2e3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.owner-card .oc-open { font-size: 26px; font-weight: 700; color: #ff9f43; line-height: 1.15; margin-top: 2px; }
+.owner-card .oc-open i { font-size: 11px; font-style: normal; color: #8b93a7; font-weight: 400; margin-left: 5px; }
+.owner-card .oc-bar { height: 5px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; margin: 6px 0 5px; }
+.owner-card .oc-bar b { display: block; height: 100%; background: linear-gradient(90deg, #ff9f43, #ff5c5c); border-radius: 3px; }
+.owner-card .oc-meta { font-size: 10.5px; color: #8b93a7; }
+.owner-card .oc-dom { font-size: 10.5px; color: #6f7789; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.owner-card.oc-dim .oc-open { color: #8b93a7; }
+.owner-divider {
+    grid-column: 1 / -1; font-size: 11px; color: #8b93a7; margin: 6px 0 2px;
+    border-top: 1px dashed #2a3350; padding-top: 7px;
+}
+.oc-empty { color: #8b93a7; font-size: 12px; padding: 12px; }
+@media (max-width: 720px) {
+    .owner-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ===== SLA 阶段1 · 只读建议面板（2026-11-17）===== */
+.sla-panel { margin-bottom: 18px; }
+.sla-chips { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 14px; }
+.sla-chip { flex:1; min-width:118px; border:1px solid #e6e8eb; border-radius:6px; padding:8px 12px; background:#fff; }
+.sla-chip b { display:block; font-size:20px; line-height:1.2; color:#12395e; }
+.sla-chip span { font-size:12px; color:#7a828c; }
+.sla-chip i { font-size:11px; color:#7a828c; font-style:normal; margin-left:6px; }
+.sla-chip-warn b { color:#d68910; }
+.sla-chip-red b, .sla-chip-fix b { color:#c0392b; }
+.sla-block { margin: 14px 0 4px; }
+.sla-block-title { font-size:13px; font-weight:600; color:#333; margin-bottom:6px; }
+.sla-hint code { background:#f3f4f6; padding:0 3px; border-radius:3px; font-size:11px; }
+.sla-hint { font-weight:400; font-size:11.5px; color:#8a919a; }
+.sla-table { width:100%; font-size:12.5px; }
+.sla-table th { white-space:nowrap; }
+.sla-table td.n, .sla-num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.sla-table td.k { white-space:nowrap; }
+.sla-badge { font-size:11px; padding:1px 7px; border-radius:9px; border:1px solid #d7dbe0; color:#333; background:#fff; white-space:nowrap; }
+.sla-ok { color:#1e7d46; border-color:#bfe3cd; background:#f2fbf5; }
+.sla-warn { color:#8a5a00; border-color:#f0d9a8; background:#fdf7e8; }
+.sla-red { color:#a3271b; border-color:#f0c2bb; background:#fdeeec; }
+.sla-paused { color:#5a6472; border-color:#d7dbe0; background:#f5f6f8; }
+.sla-closed { color:#8a919a; }
+.sla-esc-suggest { color:#6c3483; border-color:#d9c2ea; background:#f7f0fc; }
+.sla-esc-done { color:#1f6f8b; border-color:#bfdbe6; background:#eef7fb; }
+.sla-esc-top { color:#a3271b; border-color:#f0c2bb; background:#fdeeec; }
+.sla-red-text { color:#c0392b; font-weight:600; }
+.sla-warn-text { color:#b9770e; font-weight:600; }
+.sla-empty { color:#8a919a; font-size:12.5px; padding:10px 2px; }
+.sla-copy-btn { margin-left:8px; font-size:11.5px; padding:2px 8px; border:1px solid #c9ced6; background:#fff; border-radius:4px; cursor:pointer; color:#333; }
+.sla-copy-btn:hover { background:#f0f4f8; }
+
+/* SLA 表：固定列宽 + 数字列表头同步右对齐（否则表头贴左、数字贴右，视觉上"错开"） */
+.sla-table { table-layout: fixed; }
+.sla-table th, .sla-table td { padding: 8px 12px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-bug-table th.sla-num-head { text-align: right; }
+.dashboard-bug-table th.sla-center-head, .sla-table th.sla-center-head { text-align: center; }
+.sla-table td.n { text-align: right; }
+.sla-table td.k a { display: inline-block; }
+.sla-threshold-box { margin-top: 14px; padding: 12px 14px 10px; border: 1px solid #e6e8eb; border-radius: 6px; background: #fafbfc; }
+.sla-threshold-title { font-size: 12.5px; font-weight: 600; color: #12395e; margin-bottom: 8px; }
+.sla-threshold-table { background: #ffffff; }
+.sla-threshold-table th, .sla-threshold-table td { padding: 7px 12px; font-size: 12px; }
+
+/* 四段阈值总表：4 个指标列表头与单元格统一居中；优先级列左对齐（否则 td 与 th 各贴一边=错开） */
+.sla-threshold-table td.c, .sla-threshold-table th.sla-center-head { text-align: center; }
+.sla-threshold-table td:first-child, .sla-threshold-table th:first-child { text-align: left; }
+.sla-table td.c { text-align: center; }
+
+/* 复制清单：toast 反馈 + 复制兜底面板（http 明文下 navigator.clipboard 不存在） */
+.sla-toast { display: none; position: fixed; right: 22px; bottom: 22px; z-index: 9999;
+  padding: 10px 16px; border-radius: 6px; font-size: 12.5px; color: #ffffff;
+  background: #1e7d46; box-shadow: 0 4px 14px rgba(18, 57, 94, .22); max-width: 420px; }
+.sla-toast-err { background: #c0392b; }
+.sla-copy-overlay { position: fixed; inset: 0; z-index: 9998; background: rgba(18, 57, 94, .38);
+  display: flex; align-items: center; justify-content: center; }
+.sla-copy-card { width: 660px; max-width: 92vw; background: #ffffff; border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(18, 57, 94, .28); padding: 16px 18px 14px; }
+.sla-copy-head { font-size: 13px; color: #12395e; margin-bottom: 10px; line-height: 1.6; }
+.sla-copy-card textarea { width: 100%; height: 210px; resize: vertical; font-family: Consolas, "Courier New", monospace;
+  font-size: 12px; line-height: 1.6; color: #12395e; border: 1px solid #d7dbe0; border-radius: 6px;
+  padding: 8px 10px; background: #fafbfc; box-sizing: border-box; }
+.sla-copy-actions { margin-top: 10px; display: flex; gap: 8px; justify-content: flex-end; }
+.sla-btn { font-size: 12.5px; padding: 5px 14px; border-radius: 4px; border: 1px solid #c9ced6;
+  background: #ffffff; color: #333333; cursor: pointer; }
+.sla-btn:hover { background: #f0f4f8; }
+.sla-btn-primary { background: #12395e; border-color: #12395e; color: #ffffff; }
+.sla-btn-primary:hover { background: #1b4b78; }
+
+/* SLA 清单的标题列：单行截断 + 悬停看全文 */
+.sla-table td.ttl { color: #3c4650; }
+.sla-warn-block-note { color: #8a5a00; }
+
+/* 清单翻页（每页 5 条） */
+.sla-pager { display: none; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 6px; font-size: 11.5px; color: #6b7280; }
+.sla-pager-info { color: #6b7280; }
+.sla-pg-btn { font-size: 11.5px; padding: 2px 10px; border: 1px solid #c9ced6; background: #ffffff; color: #333333; border-radius: 4px; cursor: pointer; }
+.sla-pg-btn:hover:not([disabled]) { background: #f0f4f8; }
+.sla-pg-btn[disabled] { color: #b6bcc4; border-color: #e3e6ea; cursor: default; background: #fafbfc; }

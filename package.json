@@ -1,6 +1,6 @@
 {
   "name": "gpu-daily-status-tracker",
-  "version": "6.0.0",
+  "version": "6.3.0",
   "description": "国产GPU芯片Bring-up每日追踪系统 - Web应用",
   "main": "server.js",
   "scripts": {
@@ -22,7 +22,8 @@
     "cookie-parser": "^1.4.6",
     "express": "^4.22.1",
     "express-rate-limit": "^8.5.2",
-    "multer": "^2.3.0"
+    "multer": "^2.3.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

@@ -32,6 +32,12 @@ module.exports = {
       BAILIAN_BASE_URL: process.env.BAILIAN_BASE_URL || 'https://token-plan-cn.xiaomimimo.com/v1',
       BAILIAN_MODEL: process.env.GPU_TRACKER_LLM_MODEL || process.env.BAILIAN_MODEL || 'minimax-m2.5',
       DASHSCOPE_API_KEY: process.env.DASHSCOPE_API_KEY || '',
+      // 图片分析总开关。2026-11-03 实测：网关上的 qwen-vl 实际路由到纯文本模型
+      // Qwen3.6-27B，任何图片都返回空内容，只能等到超时 —— 智能诊断的白等时间
+      // 全部来自这里（3 张图并行 × 超时）。接入真正可用的视觉模型后：
+      // 设 VLM_ENABLED=true + VLM_MODEL/VLM_BASE_URL/VLM_API_KEY 指向该模型即可恢复。
+      VLM_ENABLED: process.env.VLM_ENABLED || 'false',
+      VLM_TIMEOUT_MS: process.env.VLM_TIMEOUT_MS || '20000',
       DEFAULT_ADMIN_PASSWORD: process.env.DEFAULT_ADMIN_PASSWORD || '',
       DEFAULT_USER_PASSWORD: process.env.DEFAULT_USER_PASSWORD || ''
     }

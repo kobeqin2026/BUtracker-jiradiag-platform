@@ -22,3 +22,5 @@ data/jira-cache/
 data/mail-report/
 __pycache__/
 *.pyc
+.env.bak-*
+.env.*.bak*

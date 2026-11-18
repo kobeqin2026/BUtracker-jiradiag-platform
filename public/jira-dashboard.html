@@ -5,112 +5,179 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JIRA Bug Dashboard - GPU Tracker</title>
     <link rel="stylesheet" href="/css/base.css">
-    <link rel="stylesheet" href="/css/jira-dashboard.css?v=9">
+    <link rel="stylesheet" href="/css/jira-dashboard.css?v=21">
     <link rel="stylesheet" href="/css/theme-kpi.css?v=7">
     <style id="theme-dashboard">
-        /* jira-dashboard 深色统一(与 theme-kpi.css?v=7 同规则, 字面色值防缓存; 快速诊断/关键字搜索两张渐变卡除外) */
-        .quick-diag-card, .quick-search-card { color: #fff !important; }
-        .quick-diag-card h3, .quick-search-card h3,
-        .quick-diag-desc, .quick-search-desc { color: #fff !important; opacity: 1 !important; }
+        /* jira-dashboard 浅色统一（白底，与 8089 Test Case Manager 同一套观感）：
+           字面色值 + !important，覆盖 base.css / theme-kpi.css 的深色令牌 */
+        :root {
+            --bg: #f5f6fa; --panel: #ffffff; --panel2: #f8f9fa; --border: #e0e0e0;
+            --text: #333333; --muted: #888888; --accent: #0b6bcb;
+            --green: #27ae60; --red: #e74c3c; --yellow: #d68910;
+            --purple: #6a5acd; --teal: #16a085; --orange: #e67e22;
+        }
+        html, body {
+            color-scheme: light !important;
+            background: #f5f6fa !important;
+            background-color: #f5f6fa !important;
+            color: #333333 !important;
+        }
+        .container {
+            background: #ffffff !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 12px !important;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06) !important;
+            color: #333333 !important;
+        }
+        h1, h2, h3, h4 { color: #1a1a2e !important; }
+        h2 { border-bottom-color: #e0e0e0 !important; }
+
+        /* 快速诊断 / 关键字搜索：白卡片 + 深字（原来是渐变卡白字） */
+        .quick-diag-card, .quick-search-card {
+            background: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
+            color: #333333 !important;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+        }
+        .quick-diag-card h3, .quick-search-card h3 { color: #1a1a2e !important; }
+        .quick-diag-desc, .quick-search-desc { color: #777777 !important; opacity: 1 !important; }
         .quick-diag-card input, .quick-search-card input,
         .quick-diag-card select, .quick-search-card select {
-            background: rgba(255, 255, 255, 0.15) !important;
-            border: 2px solid rgba(255, 255, 255, 0.3) !important;
+            background: #ffffff !important;
+            border: 1px solid #dddddd !important;
             border-radius: 6px !important;
-            color: #fff !important;
+            color: #333333 !important;
         }
-        .quick-diag-card input::placeholder, .quick-search-card input::placeholder { color: rgba(255, 255, 255, 0.6) !important; }
-        .quick-diag-btn { background: #fff !important; color: #764ba2 !important; }
-        .quick-search-btn { background: #fff !important; color: #11998e !important; }
+        .quick-diag-card input::placeholder, .quick-search-card input::placeholder { color: #aaaaaa !important; }
+        .quick-diag-btn { background: #0b6bcb !important; color: #ffffff !important; border-color: #0b6bcb !important; }
+        .quick-search-btn { background: #16a085 !important; color: #ffffff !important; border-color: #16a085 !important; }
+
         .control-bar {
-            background: #1d2436 !important;
-            border: 1px solid #2a3350 !important;
+            background: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
             border-radius: 10px !important;
-            color: #e6e9f2 !important;
+            color: #333333 !important;
         }
-        .control-group label { color: #e6e9f2 !important; }
-        .refresh-btn { background: #1d2436 !important; color: #4f8cff !important; border: 1px solid #2a3350 !important; }
-        .kpi-label { color: #8b93a7 !important; }
-        /* 报告日期筛选控件深色主题 (与 control-bar 一致) */
+        .control-group label { color: #333333 !important; }
+        .refresh-btn { background: #ffffff !important; color: #0b6bcb !important; border: 1px solid #dddddd !important; }
+        .kpi-label { color: #888888 !important; }
+        /* 报告日期筛选控件（与 control-bar 一致） */
         #report-date-from, #report-date-to {
-            background: #1d2436 !important;
-            border: 1px solid #2a3350 !important;
+            background: #ffffff !important;
+            border: 1px solid #dddddd !important;
             border-radius: 6px !important;
-            color: #e6e9f2 !important;
+            color: #333333 !important;
             padding: 6px 10px !important;
             font-size: 13px !important;
-            color-scheme: dark !important;
+            color-scheme: light !important;
         }
+
         .chart-card {
-            background: #171d2b !important;
-            border: 1px solid #2a3350 !important;
+            background: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
             border-radius: 12px !important;
-            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3) !important;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05) !important;
         }
-        .chart-card h3, .chart-header-row h3 { color: #e6e9f2 !important; border-bottom: 1px solid #2a3350 !important; }
+        .chart-card h3, .chart-header-row h3 { color: #1a1a2e !important; border-bottom: 1px solid #eeeeee !important; }
+
         #bug-table-section.bug-table-section {
-            background: #171d2b !important;
-            border: 1px solid #2a3350 !important;
+            background: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
             border-radius: 12px !important;
-            color: #e6e9f2 !important;
+            color: #333333 !important;
         }
-        .bug-table-section h3 { color: #e6e9f2 !important; }
-        .dashboard-bug-table thead { background: #1d2436 !important; }
-        .dashboard-bug-table th { color: #e6e9f2 !important; border-bottom: 2px solid #2a3350 !important; }
-        .dashboard-bug-table th:hover { background: #222b42 !important; }
-        .dashboard-bug-table td { color: #e6e9f2 !important; border-bottom: 1px solid #2a3350 !important; }
-        .dashboard-bug-table tbody tr:nth-child(even) td { background: #1d2436 !important; }
-        .dashboard-bug-table tbody tr:hover td { background: #222b42 !important; }
-        tr.row-overdue td { background: #2a1622 !important; }
-        tr.row-overdue:hover td { background: #3a1d2e !important; }
-        .bug-count { color: #8b93a7 !important; }
-        .status-badge { background: #1d2436 !important; border: 1px solid #2a3350 !important; color: #e6e9f2 !important; }
-        .status-badge.status-open { color: #ffc53d !important; border-color: rgba(255, 197, 61, 0.45) !important; }
-        .status-badge.status-triage { color: #6db9ff !important; border-color: rgba(109, 185, 255, 0.45) !important; }
-        .status-badge.status-implement { color: #3ddc84 !important; border-color: rgba(61, 220, 132, 0.45) !important; }
-        .status-badge.status-closed { color: #8b93a7 !important; }
-        .status-badge.status-rejected { color: #ff5c5c !important; border-color: rgba(255, 92, 92, 0.45) !important; }
-        #loading-overlay.loading-overlay { background: rgba(15, 20, 32, 0.92) !important; color: #e6e9f2 !important; }
-        #error-message.error-message { background: rgba(255, 92, 92, 0.12) !important; border: 1px solid rgba(255, 92, 92, 0.45) !important; color: #ff5c5c !important; }
-        .last-updated { color: #8b93a7 !important; }
-        .diag-section h4 { color: #e6e9f2 !important; }
-        .diag-section p, .diag-section li { color: #8b93a7 !important; }
-        .diag-confidence { background: #1d2436 !important; border: 1px solid #2a3350 !important; color: #e6e9f2 !important; }
-        #diag-vlm-status.diag-vlm-status { background: #1d2436 !important; border-color: #2a3350 !important; color: #e6e9f2 !important; }
-        .diag-related-section { border-top-color: #2a3350 !important; }
-        .related-bug-item { border-bottom-color: #2a3350 !important; }
-        .related-bug-item:hover { background: #1d2436 !important; }
-        .related-bug-project { background: #1d2436 !important; color: #8b93a7 !important; }
-        .related-bug-summary, .related-bug-status { color: #8b93a7 !important; }
-        .screenshot-card { background: #171d2b !important; border-color: #2a3350 !important; }
-        .screenshot-card-summary, .screenshot-card-key-data, .screenshot-card-key-data strong { color: #e6e9f2 !important; }
-        .screenshot-card-key-data { border-top-color: #2a3350 !important; }
-        .screenshot-keyword-tag { background: #1d2436 !important; color: #8b93a7 !important; }
-        .screenshot-card-pending { border-color: rgba(255, 159, 67, 0.6) !important; background: rgba(255, 159, 67, 0.08) !important; }
-        #quick-search-results.quick-search-results { background: #1d2436 !important; border: 1px solid #2a3350 !important; color: #e6e9f2 !important; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5) !important; }
-        .search-results-header { background: #171d2b !important; color: #8b93a7 !important; border-bottom-color: #2a3350 !important; }
-        .search-result-item { border-bottom-color: #2a3350 !important; }
-        .search-result-item:hover { background: #222b42 !important; }
-        .search-result-desc, .search-result-meta { color: #8b93a7 !important; }
-        .search-result-diag-btn { background: #171d2b !important; border-color: #2a3350 !important; color: #e6e9f2 !important; }
-        .search-result-diag-btn:hover { background: #4f8cff !important; color: #fff !important; border-color: #4f8cff !important; }
-        .search-highlight { background: rgba(255, 197, 61, 0.25) !important; color: #ffc53d !important; }
-        .search-no-results { color: #8b93a7 !important; }
+        .bug-table-section h3 { color: #1a1a2e !important; }
+        .dashboard-bug-table thead { background: #f8f9fa !important; }
+        .dashboard-bug-table th { background: #f8f9fa !important; color: #333333 !important; border-bottom: 2px solid #e0e0e0 !important; }
+        .dashboard-bug-table th:hover { background: #eef1f5 !important; }
+        .dashboard-bug-table td { color: #333333 !important; border-bottom: 1px solid #f0f0f0 !important; }
+        .dashboard-bug-table tbody tr:nth-child(even) td { background: #fafbfc !important; }
+        .dashboard-bug-table tbody tr:hover td { background: #f0f4f8 !important; }
+        tr.row-overdue, tr.row-overdue td { background: #fdecea !important; }
+        tr.row-overdue:hover td { background: #fbdcd8 !important; }
+        .bug-count { color: #888888 !important; }
+
+        .status-badge { background: #ffffff !important; border: 1px solid #e0e0e0 !important; color: #333333 !important; }
+        .status-badge.status-open { color: #b7791f !important; border-color: rgba(183, 121, 31, 0.45) !important; }
+        .status-badge.status-triage { color: #0b6bcb !important; border-color: rgba(11, 107, 203, 0.35) !important; }
+        .status-badge.status-implement { color: #1e7d46 !important; border-color: rgba(30, 125, 70, 0.35) !important; }
+        .status-badge.status-closed { color: #888888 !important; }
+        .status-badge.status-rejected { color: #c0392b !important; border-color: rgba(192, 57, 43, 0.35) !important; }
+
+        #loading-overlay.loading-overlay { background: rgba(255, 255, 255, 0.92) !important; color: #333333 !important; }
+        #error-message.error-message { background: #fdecea !important; border: 1px solid rgba(192, 57, 43, 0.35) !important; color: #c0392b !important; }
+        .last-updated { color: #888888 !important; }
+
+        .diag-section h4 { color: #1a1a2e !important; }
+        .diag-section p, .diag-section li { color: #555555 !important; }
+        .diag-confidence { background: #f8f9fa !important; border: 1px solid #e0e0e0 !important; color: #333333 !important; }
+        #diag-vlm-status.diag-vlm-status { background: #f8f9fa !important; border-color: #e0e0e0 !important; color: #333333 !important; }
+        .diag-related-section { border-top-color: #eeeeee !important; }
+        .related-bug-item { border-bottom-color: #f0f0f0 !important; }
+        .related-bug-item:hover { background: #f7f9fc !important; }
+        .related-bug-project { background: #f8f9fa !important; color: #777777 !important; }
+        .related-bug-summary, .related-bug-status { color: #777777 !important; }
+
+        .screenshot-card { background: #ffffff !important; border-color: #e0e0e0 !important; }
+        .screenshot-card-summary, .screenshot-card-key-data, .screenshot-card-key-data strong { color: #333333 !important; }
+        .screenshot-card-key-data { border-top-color: #eeeeee !important; }
+        .screenshot-keyword-tag { background: #f8f9fa !important; color: #777777 !important; }
+        .screenshot-card-pending { border-color: rgba(230, 126, 34, 0.55) !important; background: rgba(230, 126, 34, 0.07) !important; }
+
+        #quick-search-results.quick-search-results {
+            background: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
+            color: #333333 !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+        }
+        .search-results-header { background: #f8f9fa !important; color: #777777 !important; border-bottom-color: #e0e0e0 !important; }
+        .search-result-item { border-bottom-color: #f0f0f0 !important; }
+        .search-result-item:hover { background: #f7f9fc !important; }
+        .search-result-desc, .search-result-meta { color: #777777 !important; }
+        .search-result-diag-btn { background: #ffffff !important; border-color: #dddddd !important; color: #333333 !important; }
+        .search-result-diag-btn:hover { background: #0b6bcb !important; color: #ffffff !important; border-color: #0b6bcb !important; }
+        .search-highlight { background: rgba(214, 137, 16, 0.18) !important; color: #8a5a00 !important; }
+        .search-no-results { color: #888888 !important; }
+
+        /* 登录门 / 模态框：theme-kpi.css 里是深色 !important，这里同权重覆盖 */
+        .gate-card, .login-section, .login-box {
+            background: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08) !important;
+            color: #333333 !important;
+        }
+        .gate-title, .login-title, .gate-card h2 { color: #1a1a2e !important; }
+        .gate-card p { color: #777777 !important; }
+        .gate-err { color: #c0392b !important; }
+        .gate-overlay { background: rgba(245, 246, 250, 0.96) !important; }
+        .modal, .modal-overlay { background: rgba(26, 26, 46, 0.35) !important; }
+        .modal-content, .diag-modal-content {
+            background: #ffffff !important;
+            border: 1px solid #e0e0e0 !important;
+            color: #333333 !important;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15) !important;
+        }
+        .modal-header { border-bottom-color: #e0e0e0 !important; background: #ffffff !important; color: #1a1a2e !important; }
+        .modal-cancel-btn { background: #f8f9fa !important; border: 1px solid #e0e0e0 !important; color: #333333 !important; }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
+    <!-- Chart.js 本地化（2026-11-05）：内网访问不到 jsdelivr，CDN 取不到时 renderCharts 抛
+         "Chart is not defined"，会打断整个渲染链、导致 Bug 明细列表不更新 -->
+    <script src="/js/vendor/chart.umd.min.js?v=4.4.7"></script>
 </head>
 <body class="gated">
     <style>
         body.gated { overflow: hidden; }
         body.gated .container { display: none !important; }
         .gate-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9999; }
-        .gate-card { padding: 34px 40px; width: 400px; max-width: 92vw; text-align: center; }
+        .gate-card { padding: 34px 40px; width: 400px; max-width: 92vw; text-align: center;
+                     background: #ffffff; border: 1px solid #e0e0e0; border-radius: 12px;
+                     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08); color: #333333; }
         .gate-card h2 { margin: 0 0 6px; }
-        .gate-card p { color: #8b93a7; font-size: 13px; margin: 0 0 20px; }
-        .gate-card input { width: 100%; box-sizing: border-box; padding: 11px 12px; margin: 8px 0; font-size: 14px; outline: none; }
-        .gate-card input:focus { border-color: #4f8cff; }
+        .gate-card p { color: #777777; font-size: 13px; margin: 0 0 20px; }
+        .gate-card input { width: 100%; box-sizing: border-box; padding: 11px 12px; margin: 8px 0; font-size: 14px; outline: none;
+                           background: #ffffff; border: 1px solid #dddddd; border-radius: 6px; color: #333333; }
+        .gate-card input:focus { border-color: #0b6bcb; }
+        .gate-card input:focus { border-color: #0b6bcb; }
         .gate-card .gate-btn { width: 100%; padding: 11px; margin-top: 14px; font-size: 15px; cursor: pointer; }
         .gate-err { min-height: 18px; margin-top: 10px; }
         #gate-login-err { text-align: center; }
@@ -220,12 +287,17 @@
                 <label>自动刷新:
                     <select id="auto-refresh" onchange="toggleAutoRefresh()">
                         <option value="0">关闭</option>
-                        <option value="300000" selected>5分钟</option>
                         <option value="900000">15分钟</option>
-                        <option value="1800000">30分钟</option>
+                        <option value="1800000" selected>30分钟</option>
+                        <option value="3600000">60分钟</option>
                     </select>
                     <span id="auto-refresh-status" style="margin-left:8px; font-size:12px;"></span>
                 </label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="manual-refresh-btn" class="sync-btn" onclick="manualRefresh()"
+                            title="立即从 JIRA 重新获取一次数据（不等自动刷新）">🔄 手动刷新</button>
+                    <span id="manual-refresh-status" style="font-size:12px;"></span>
+                </div>
             </div>
         </div>
 
@@ -297,18 +369,46 @@
                 </div>
             </div>
             <div class="chart-card">
-                <h3>按负责人分布</h3>
-                <div class="chart-wrapper">
-                    <canvas id="chart-owner"></canvas>
+                <div class="chart-header-row">
+                    <h3>按负责人分布 <span id="owner-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span></h3>
+                    <div class="owner-view-tabs">
+                        <button class="owner-tab active" data-view="chart" onclick="setOwnerView('chart')">图表</button>
+                        <button class="owner-tab" data-view="cards" onclick="setOwnerView('cards')">卡片</button>
+                        <button class="owner-tab" data-view="table" onclick="setOwnerView('table')">表格</button>
+                    </div>
+                </div>
+                <div class="owner-summary" id="owner-summary"></div>
+                <div class="chart-wrapper owner-chart-scroll" id="owner-chart-wrapper">
+                    <div id="owner-chart-holder" style="position:relative;height:300px;">
+                        <canvas id="chart-owner"></canvas>
+                    </div>
+                </div>
+                <div class="owner-more" id="owner-more"></div>
+                <div class="owner-cards" id="owner-cards" style="display:none;"></div>
+                <div class="owner-rest-note" id="owner-rest-note" style="display:none;"></div>
+                <div class="owner-table-wrap" id="owner-table-wrap" style="display:none;">
+                    <div class="owner-table-toolbar">
+                        <input type="text" id="owner-tbl-search" class="filter-input" placeholder="搜索负责人 / Domain" oninput="renderOwnerTable()">
+                        <span class="owner-tbl-count" id="owner-tbl-count"></span>
+                        <button class="reset-zoom-btn" onclick="exportOwnerTableCsv()" title="导出当前负责人分布">导出 CSV</button>
+                    </div>
+                    <div class="owner-table-scroll">
+                        <table class="dashboard-bug-table owner-table" id="owner-table"></table>
+                    </div>
+                    <div class="owner-table-hint">点表头排序；点任意一行 → 下方「Bug 明细列表」按该负责人筛选</div>
                 </div>
             </div>
 
             <!-- Row 3: Domain + Age -->
             <div class="chart-card">
-                <h3>按 Domain 分布</h3>
-                <div class="chart-wrapper">
+                <div class="chart-header-row">
+                    <h3>按 Domain 分布 <span id="domain-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span></h3>
+                </div>
+                <div class="owner-summary" id="domain-summary"></div>
+                <div class="chart-wrapper" id="domain-chart-wrapper" style="height:430px;">
                     <canvas id="chart-domain"></canvas>
                 </div>
+                <div class="owner-rest-note" id="domain-rest-note" style="display:none;"></div>
             </div>
             <div class="chart-card">
                 <h3>未关闭Bug年龄分布</h3>
@@ -321,6 +421,125 @@
         <!-- Trend History (cached data) - removed -->
 
         <!-- Bug Detail Table -->
+        <!-- SLA 阶段1：只读建议（黄牌/红牌/修复超期/挂起/已升档，每页 5 条）—— 不改 JIRA，升档需人工执行 -->
+        <div class="chart-card sla-panel" id="sla-panel" style="display:none;">
+            <div class="chart-header-row">
+                <h3>SLA 阶段1 · 只读建议 <span id="sla-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span></h3>
+            </div>
+            <div class="sla-chips" id="sla-chips"></div>
+            <div class="sla-block">
+                <div class="sla-block-title">黄牌清单 <span class="sla-hint">静默 &gt; 1× 心跳（只提醒、不升档）—— 周会照单点名，催一次就把心跳续上</span>
+                    <button class="sla-copy-btn" onclick="slaCopyWarn()">复制清单</button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="dashboard-bug-table sla-table" id="sla-warn-table">
+                        <colgroup>
+                            <col style="width:13%"><col style="width:33%"><col style="width:12%">
+                            <col style="width:9%"><col style="width:15%"><col style="width:18%">
+                        </colgroup>
+                        <thead><tr>
+                            <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">静默(天)</th><th>Domain</th><th>负责人</th>
+                        </tr></thead>
+                        <tbody id="sla-warn-body"></tbody>
+                    </table>
+                </div>
+                <div class="sla-pager" id="sla-warn-pager"></div>
+                <div class="sla-empty" id="sla-warn-empty" style="display:none;">当前没有黄牌单（静默都在 1× 心跳以内）</div>
+            </div>
+            <div class="sla-block">
+                <div class="sla-block-title">红牌清单 <span class="sla-hint">静默 &gt; 2× 心跳 = 违约 —— 「处理建议」列直接告诉你升到哪一档；升完请在 JIRA 里改优先级并打 <code>sla-escalated</code> / <code>sla-from-&lt;原档&gt;</code></span>
+                    <button class="sla-copy-btn" onclick="slaCopyRed()">复制清单</button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="dashboard-bug-table sla-table" id="sla-red-table">
+                        <colgroup>
+                            <col style="width:12%"><col style="width:28%"><col style="width:11%">
+                            <col style="width:8%"><col style="width:17%"><col style="width:13%"><col style="width:11%">
+                        </colgroup>
+                        <thead><tr>
+                            <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">静默(天)</th>
+                            <th class="sla-center-head">处理建议</th><th>Domain</th><th>负责人</th>
+                        </tr></thead>
+                        <tbody id="sla-red-body"></tbody>
+                    </table>
+                </div>
+                <div class="sla-pager" id="sla-red-pager"></div>
+                <div class="sla-empty" id="sla-red-empty" style="display:none;">当前没有红牌单（静默都在 2× 心跳以内）</div>
+            </div>
+            <div class="sla-block">
+                <div class="sla-block-title">修复超期清单 <span class="sla-hint">已开 &gt; 修复 SLA（Highest 7 / High 14 / Medium 30 / Low 60 天）—— 前段是已超期，后段是临期（窗口用掉 ≥80%）</span>
+                    <button class="sla-copy-btn" onclick="slaCopyFix()">复制清单</button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="dashboard-bug-table sla-table" id="sla-fix-table">
+                        <colgroup>
+                            <col style="width:12%"><col style="width:27%"><col style="width:11%">
+                            <col style="width:17%"><col style="width:8%"><col style="width:13%"><col style="width:12%">
+                        </colgroup>
+                        <thead><tr>
+                            <th>Key</th><th>标题</th><th>优先级</th><th class="sla-center-head">已开 / 修复SLA</th>
+                            <th class="sla-num-head">静默(天)</th><th>Domain</th><th>负责人</th>
+                        </tr></thead>
+                        <tbody id="sla-fix-body"></tbody>
+                    </table>
+                </div>
+                <div class="sla-pager" id="sla-fix-pager"></div>
+                <div class="sla-empty" id="sla-fix-empty" style="display:none;">当前没有修复超期或临期的单</div>
+            </div>
+            <div class="sla-block">
+                <div class="sla-block-title">挂起清单 <span class="sla-hint">打了 <code>sla-paused</code> 的单 —— 静默不计、不升档；挂起 &gt;2× 心跳未解除视为解除并升档</span>
+                    <button class="sla-copy-btn" onclick="slaCopyPaused()">复制清单</button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="dashboard-bug-table sla-table" id="sla-paused-table">
+                        <colgroup>
+                            <col style="width:12%"><col style="width:27%"><col style="width:11%">
+                            <col style="width:8%"><col style="width:17%"><col style="width:13%"><col style="width:12%">
+                        </colgroup>
+                        <thead><tr>
+                            <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">静默(天)</th>
+                            <th class="sla-center-head">已开 / 修复SLA</th><th>Domain</th><th>负责人</th>
+                        </tr></thead>
+                        <tbody id="sla-paused-body"></tbody>
+                    </table>
+                </div>
+                <div class="sla-pager" id="sla-paused-pager"></div>
+                <div class="sla-empty" id="sla-paused-empty" style="display:none;">当前没有挂起单（没有单打 sla-paused）</div>
+            </div>
+            <div class="sla-block">
+                <div class="sla-block-title">已升档清单 <span class="sla-hint">已打 <code>sla-escalated</code> 的单 —— 看升档后是否还在睡（静默是否又超新档 2× 心跳）</span></div>
+                <div class="table-wrapper">
+                    <table class="dashboard-bug-table sla-table" id="sla-escalated-table">
+                        <colgroup>
+                            <col style="width:15%"><col style="width:23%"><col style="width:10%">
+                            <col style="width:12%"><col style="width:18%"><col style="width:22%">
+                        </colgroup>
+                        <thead><tr>
+                            <th>Key</th><th>原档 → 现档</th><th class="sla-num-head">静默(天)</th><th class="sla-center-head">当前心跳</th>
+                            <th>Domain</th><th>负责人</th>
+                        </tr></thead>
+                        <tbody id="sla-escalated-body"></tbody>
+                    </table>
+                </div>
+                <div class="sla-pager" id="sla-escalated-pager"></div>
+                <div class="sla-empty" id="sla-escalated-empty" style="display:none;">暂无升档记录（还没有单打上 sla-escalated label）</div>
+            </div>
+            <div class="sla-threshold-box">
+                <div class="sla-threshold-title">四段阈值总表</div>
+                <div class="table-wrapper">
+                    <table class="dashboard-bug-table sla-table sla-threshold-table" id="sla-threshold-table">
+                        <colgroup>
+                            <col style="width:14%"><col style="width:19%"><col style="width:25%"><col style="width:21%"><col style="width:21%">
+                        </colgroup>
+                        <thead><tr>
+                            <th>优先级</th><th class="sla-center-head">① 首次响应</th><th class="sla-center-head">② 持续响应（心跳）</th><th class="sla-center-head">③ 修复完成</th><th class="sla-center-head">④ 验证关闭</th>
+                        </tr></thead>
+                        <tbody id="sla-threshold-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <div class="bug-table-section" id="bug-table-section" style="display:none;">
             <h3>Bug 明细列表</h3>
 
@@ -345,7 +564,12 @@
                     <option value="lowest">Lowest</option>
                 </select>
                 <input type="text" id="filter-owner" placeholder="负责人" class="filter-input" oninput="filterBugs()">
+                <select id="filter-domain" class="filter-select" onchange="filterBugs()" title="按 Domain 过滤（含未设置）">
+                    <option value="">全部 Domain</option>
+                </select>
                 <label><input type="checkbox" id="show-closed" onchange="filterBugs()"> 显示已关闭</label>
+                <button id="export-btn" class="refresh-btn" onclick="exportBugDetails()" title="导出当前筛选结果（JIRA ID / 描述 / Priority / Assignee / LLM 归纳的最新 debug progress）">📥 导出Bug明细</button>
+                <span id="export-status" class="bug-count"></span>
                 <span id="bug-count" class="bug-count"></span>
             </div>
 
@@ -360,7 +584,11 @@
                             <th data-sort="owner" onclick="sortBugs('owner')">负责人</th>
                             <th data-sort="domain" onclick="sortBugs('domain')">Domain</th>
                             <th data-sort="reportDate" onclick="sortBugs('reportDate')">报告日期</th>
-                            <th data-sort="ageDays" onclick="sortBugs('ageDays')">年龄(天)</th><th>智能诊断</th>
+                            <th data-sort="ageDays" onclick="sortBugs('ageDays')">年龄(天)</th>
+                            <th class="sla-num-head" data-sort="sla.silent" onclick="sortBugs('sla.silent')">静默(天)</th>
+                            <th class="sla-center-head" data-sort="sla.red" onclick="sortBugs('sla.red')">心跳</th>
+                            <th class="sla-num-head" data-sort="sla.daysOpen" onclick="sortBugs('sla.daysOpen')">修复SLA</th>
+                            <th class="sla-center-head">升档</th><th>智能诊断</th>
                         </tr>
                     </thead>
                     <tbody id="bug-table-body">
@@ -424,6 +652,53 @@
         </div>
     </div>
 
-    <script src="/js/jira-dashboard.js?v=53"></script>
+    <!-- 导出预览弹窗：每个 priority 一个 Tab -->
+    <div id="export-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.72); z-index:10020; align-items:center; justify-content:center; padding:24px;">
+        <div style="background:#1b1f2a; border:1px solid #e0e0e0; border-radius:10px; width:min(1500px,96vw); max-height:88vh; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,0.55);">
+            <div style="display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid #e0e0e0;">
+                <h3 style="margin:0; color:#333333; font-size:16px;">📥 Bug 明细导出</h3>
+                <span id="export-summary" style="color:#777777; font-size:12px;"></span>
+                <span style="flex:1;"></span>
+                <button id="export-xlsx-btn" type="button" onclick="downloadExportXlsx()"
+                        style="background:#1f6feb; color:#fff; border:none; border-radius:6px; padding:7px 12px; cursor:pointer; font-size:13px;">📥 导出 Excel（按优先级 Tab）</button>
+                <button type="button" onclick="downloadExportTabCsv()"
+                        style="background:#e0e0e0; color:#333333; border:1px solid #dddddd; border-radius:6px; padding:7px 12px; cursor:pointer; font-size:13px;">⬇️ 当前 Tab CSV</button>
+                <button type="button" onclick="closeExportModal()"
+                        style="background:transparent; color:#777777; border:1px solid #dddddd; border-radius:6px; padding:7px 12px; cursor:pointer; font-size:13px;">✕ 关闭</button>
+            </div>
+            <div id="export-tabs" style="display:flex; gap:6px; padding:10px 18px 0; border-bottom:1px solid #e0e0e0;"></div>
+            <div style="flex:1; overflow:auto; padding:0 18px 8px;">
+                <table style="width:100%; border-collapse:collapse; font-size:12.5px; color:#dfe4ee;">
+                    <thead>
+                        <tr style="position:sticky; top:0; background:#f8f9fa;">
+                            <th style="text-align:right; padding:8px 6px; width:52px; border-bottom:1px solid #e0e0e0;">Index</th>
+                            <th style="text-align:left; padding:8px 6px; width:130px; border-bottom:1px solid #e0e0e0;">JIRA ID</th>
+                            <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e0e0e0;">Description</th>
+                            <th style="text-align:left; padding:8px 6px; width:90px; border-bottom:1px solid #e0e0e0;">Priority</th>
+                            <th style="text-align:left; padding:8px 6px; width:120px; border-bottom:1px solid #e0e0e0;">Component</th>
+                            <th style="text-align:left; padding:8px 6px; width:170px; border-bottom:1px solid #e0e0e0;">Assignee</th>
+                            <th style="text-align:left; padding:8px 6px; min-width:360px; border-bottom:1px solid #e0e0e0;">Debug Progress</th>
+                        </tr>
+                    </thead>
+                    <tbody id="export-tbody"></tbody>
+                </table>
+            </div>
+            <div id="export-modal-status" style="padding:10px 18px; border-top:1px solid #e0e0e0; color:#777777; font-size:12px;"></div>
+        </div>
+    </div>
+
+    <style>
+        .export-tab {
+            background: transparent; color: #777777; border: 1px solid #dddddd;
+            border-bottom: none; border-radius: 6px 6px 0 0; padding: 8px 14px;
+            font-size: 13px; cursor: pointer;
+        }
+        .export-tab.active { background: #f8f9fa; color: #333333; border-color: #e0e0e0; font-weight: 600; }
+        .export-tab-count { color: #e67e22; font-weight: 600; margin-left: 4px; }
+        #export-tbody td { padding: 7px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+        #export-tbody tr:hover { background: #f7f9fc; }
+    </style>
+
+    <script src="/js/jira-dashboard.js?v=94"></script>
 </body>
 </html>

@@ -606,7 +606,7 @@ async function summarizeOneBugProgress(authHeader, item, force) {
  * POST /api/data/bug-details-export
  * Body: { groups: [{ name, rows: [{key, description, priority, component, assignee, progress}] }], filename? }
  * 每组一个 worksheet（Excel 底部就是两个 tab），列固定为:
- * Index / JIRA ID / Description / Priority / Component / Assignee / Debug Progress
+ * Index / JIRA ID / Description / Priority / Age(days) / Silent(days) / Component / Assignee / Debug Progress
  * 返回 xlsx 二进制（Content-Disposition: attachment）
  */
 router.post('/bug-details-export', auth.authenticateToken, function(req, res) {
@@ -617,7 +617,7 @@ router.post('/bug-details-export', auth.authenticateToken, function(req, res) {
         if (!groups.length) {
             return res.status(400).json({ success: false, error: '没有可导出的分组' });
         }
-        var headers = ['Index', 'JIRA ID', 'Description', 'Priority', 'Component', 'Assignee', 'Debug Progress'];
+        var headers = ['Index', 'JIRA ID', 'Description', 'Priority', 'Age(days)', 'Silent(days)', 'Component', 'Assignee', 'Debug Progress'];
         var wb = XLSX.utils.book_new();
         groups.forEach(function(g) {
             var sheetName = String(g.name || 'Sheet')
@@ -630,13 +630,15 @@ router.post('/bug-details-export', auth.authenticateToken, function(req, res) {
                     r.key || '',
                     r.description || '',
                     r.priority || '',
+                    (r.age === undefined || r.age === null) ? '' : r.age,
+                    (r.silent === undefined || r.silent === null) ? '' : r.silent,
                     r.component || '',
                     r.assignee || '',
                     r.progress || ''
                 ]);
             });
             var ws = XLSX.utils.aoa_to_sheet(aoa);
-            ws['!cols'] = [{ wch: 6 }, { wch: 14 }, { wch: 62 }, { wch: 10 }, { wch: 14 }, { wch: 24 }, { wch: 90 }];
+            ws['!cols'] = [{ wch: 6 }, { wch: 14 }, { wch: 62 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 24 }, { wch: 90 }];
             XLSX.utils.book_append_sheet(wb, ws, sheetName);
         });
         var buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

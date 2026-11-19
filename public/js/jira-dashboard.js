@@ -406,13 +406,13 @@ function clearDashboard() {
     if (trendSection) trendSection.style.display = 'none';
 
     // Clear KPI values
-    ['kpi-total', 'kpi-open', 'kpi-closed', 'kpi-today', 'kpi-week', 'kpi-avg', 'kpi-overdue'].forEach(function(id) {
+    ['kpi-total', 'kpi-open', 'kpi-closed', 'kpi-today', 'kpi-week', 'kpi-avg', 'kpi-overdue', 'kpi-noprio'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) el.textContent = '0';
     });
 
     // Clear chart canvases
-    ['chart-status', 'chart-severity', 'chart-owner', 'chart-domain', 'chart-age', 'chart-trend'].forEach(function(id) {
+    ['chart-status', 'chart-severity', 'chart-owner', 'chart-domain', 'chart-age', 'chart-age-prio', 'chart-trend'].forEach(function(id) {
         var canvas = document.getElementById(id);
         if (canvas) {
             var ctx = canvas.getContext('2d');
@@ -551,6 +551,41 @@ function renderKPI(stats) {
     animateNumber('kpi-week', stats.weekClosed || 0);
     animateNumber('kpi-avg', stats.avgResolutionDays || 0);
     animateNumber('kpi-overdue', stats.overdue || 0);
+    renderNoPrioKpi();
+}
+
+/* 所有 Bug 都必须设置优先级：未关闭且 JIRA 优先级为空的单在这里计数（>0 标红），点卡片 → 明细表筛出它们 */
+function renderNoPrioKpi() {
+    var openNoPrio = (Dashboard.allBugs || []).filter(function (b) {
+        var st = String(b.status || '').toLowerCase();
+        if (st === 'closed' || st === 'rejected' || st === 'done') return false;
+        return !String(b.severity || '').trim();
+    });
+    Dashboard.noPrioCount = openNoPrio.length;
+    animateNumber('kpi-noprio', openNoPrio.length);
+    var card = document.getElementById('kpi-noprio-card');
+    if (card) {
+        card.classList.toggle('kpi-alert', openNoPrio.length > 0);
+        card.title = openNoPrio.length
+            ? ('未关闭 Bug 中有 ' + openNoPrio.length + ' 条没设 JIRA 优先级（这些单不参与 SLA 心跳提醒）· 点击筛选明细表')
+            : '未关闭 Bug 全部已设置优先级 · 点击查看';
+    }
+}
+
+/* severity 徽章：所有 Bug 都必须设置优先级 —— 空值不再让渲染崩（旧代码 bug.severity.charAt(0) 会 TypeError） */
+function severityBadgeInfo(bug) {
+    var s = String((bug && bug.severity) || '').toLowerCase().trim();
+    if (!s) return { cls: 'severity-none', text: '未设置' };
+    return { cls: 'severity-' + s, text: s.charAt(0).toUpperCase() + s.slice(1) };
+}
+
+/* JIRA 链接：jira-dashboard.html 是独立页（没有全局 App），
+   一律走这个函数：bug.jiraUrl → App.jiraBaseUrl + key → '#'，绝不直接读 App 造成 ReferenceError */
+function jiraHref(bug) {
+    if (!bug) return '#';
+    if (bug.jiraUrl) return bug.jiraUrl;
+    var base = (typeof App !== 'undefined' && App && App.jiraBaseUrl) ? App.jiraBaseUrl : '';
+    return base ? (base + (bug.bugId || '')) : '#';
 }
 
 var _animTimers = {};
@@ -619,6 +654,7 @@ function renderCharts(charts) {
     renderOwnerChart(charts.ownerOpenCount || charts.ownerCount);
     renderDomainChart(charts.domainCount);
     renderAgeChart(charts.ageBuckets);
+    renderAgeByPriority();
 }
 
 function renderStatusChart(statusCount) {
@@ -720,7 +756,10 @@ function renderSeverityChart(severityCount, severityOpenCount) {
 
     if (Dashboard.charts.severity) Dashboard.charts.severity.destroy();
 
-    // 自定义插件: 柱段上标注数字 (彩色=未关闭, 灰=已关闭); 段太小时强制最小可视高度, 保证小值类目(Highest/Low)可读
+    // 自定义插件: 柱段上标注数字 (彩色=未关闭, 灰=已关闭)
+    // ⚠ 绝不为了"看得见"放大段高 —— 旧实现给 <15px 的段补画 15px 矩形，
+    //   导致 Highest「1 未关闭 / 9 已关闭」里那个 1 被画成 15px、盖住灰色段，看起来比 9 还高（2026-11-19 用户报的 bug）。
+    //   现在：段高 >=14px 写在柱内；更小的段数字画到柱右侧（带细引导线 + 强制 13px 间距），柱体比例保持真实。
     var severityBarLabels = {
         id: 'severityBarLabels',
         afterDatasetsDraw: function(chart) {
@@ -728,50 +767,66 @@ function renderSeverityChart(severityCount, severityOpenCount) {
             var c = chart.ctx;
             var openArr = chart.data.datasets[0].data || [];
             var closeArr = chart.data.datasets[1].data || [];
-            var segMin = 15; // 最小段显示高度(px), 让小值类目也能看清
-            // 柱体里的阿拉伯数字：只要粗黑体, 不加白底(不要药丸底)
-            function drawNum(text, x, y) {
+            var MIN_IN = 14;
+            function onColor(hex) {
+                var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+                if (!m) return '#ffffff';
+                var n = parseInt(m[1], 16);
+                var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+                return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#333333' : '#ffffff';
+            }
+            function drawNum(text, x, y, color, align) {
                 c.save();
                 c.font = 'bold 12px "Microsoft YaHei", "DengXian", "Heiti SC", sans-serif';
-                c.textAlign = 'center';
+                c.textAlign = align || 'center';
                 c.textBaseline = 'middle';
-                c.fillStyle = '#000000';
+                c.fillStyle = color;
                 c.fillText(String(text), x, y);
                 c.restore();
-            }
-            function drawRect(x, y, w, h, r, fill) {
-                c.fillStyle = fill;
-                c.beginPath();
-                if (c.roundRect) c.roundRect(x, y, w, h, r);
-                else c.rect(x, y, w, h);
-                c.fill();
             }
             c.save();
             for (var i = 0; i < openArr.length; i++) {
                 var open = openArr[i] || 0;
                 var closed = closeArr[i] || 0;
-                var total = open + closed;
-                if (total <= 0) continue;
                 var el0 = chart.getDatasetMeta(0).data[i];
                 var el1 = chart.getDatasetMeta(1).data[i];
-                var x = el0.x;
-                var w = el0.width || 0;
-                var b0 = (typeof el0.base === 'number') ? el0.base : el0.y;
-                var b1 = (typeof el1.base === 'number') ? el1.base : el1.y;
-                var col0 = chart.data.datasets[0].backgroundColor[i] || '#999';
-                var col1 = chart.data.datasets[1].backgroundColor || 'rgba(149,165,166,0.5)';
-                var hOpenTrue = Math.abs(b0 - el0.y);
-                var hClosedTrue = Math.abs(b1 - el1.y);
-                var coloredBottom = Math.max(el0.y, b0);                 // 彩色段底(=0)
-                var coloredTop = coloredBottom - Math.max(hOpenTrue, segMin);
-                var grayBottom = coloredTop;                             // 灰段叠在彩色段上方
-                var grayTop = grayBottom - Math.max(hClosedTrue, segMin);
-                // 仅当段被强制放大时重画该段, 否则保留 Chart.js 原图
-                if (open > 0 && hOpenTrue < segMin) drawRect(x - w/2, coloredTop, w, Math.max(hOpenTrue, segMin), 4, col0);
-                if (closed > 0 && hClosedTrue < segMin) drawRect(x - w/2, grayTop, w, Math.max(hClosedTrue, segMin), 4, col1);
-                // 数字: 彩色(未关闭)段=未关闭数, 灰(已关闭)段=已关闭数; 柱上不显示总数
-                if (open > 0) drawNum(String(open), x, (coloredTop + coloredBottom) / 2);
-                if (closed > 0) drawNum(String(closed), x, (grayTop + grayBottom) / 2);
+                if (!el0 || !el1) continue;
+                var barRight = el0.x + (el0.width || 0) / 2;
+                var outside = [];
+                if (open > 0) {
+                    var h0 = Math.abs(el0.base - el0.y), mid0 = (el0.y + el0.base) / 2;
+                    if (h0 >= MIN_IN) drawNum(open, el0.x, mid0, onColor(chart.data.datasets[0].backgroundColor[i]));
+                    else outside.push({ y: mid0, segY: mid0, text: open, color: '#c0392b' });
+                }
+                if (closed > 0) {
+                    var h1 = Math.abs(el1.base - el1.y), mid1 = (el1.y + el1.base) / 2;
+                    if (h1 >= MIN_IN) drawNum(closed, el1.x, mid1, '#333333');
+                    else outside.push({ y: mid1, segY: mid1, text: closed, color: '#7f8c8d' });
+                }
+                if (outside.length) {
+                    outside.sort(function(a, b) { return a.y - b.y; });
+                    var GAP = 13;
+                    for (var k = 1; k < outside.length; k++) {
+                        if (outside[k].y - outside[k - 1].y < GAP) outside[k].y = outside[k - 1].y + GAP;
+                    }
+                    var area = chart.chartArea;
+                    var over = outside[outside.length - 1].y - (area.bottom - 6);
+                    if (over > 0) outside.forEach(function(o) { o.y -= over; });
+                    outside.forEach(function(o) {
+                        if (Math.abs(o.y - o.segY) > 1) {
+                            c.save();
+                            c.strokeStyle = o.color;
+                            c.globalAlpha = 0.45;
+                            c.lineWidth = 1;
+                            c.beginPath();
+                            c.moveTo(barRight + 2, o.segY);
+                            c.lineTo(barRight + 10, o.y);
+                            c.stroke();
+                            c.restore();
+                        }
+                        drawNum(o.text, barRight + 13, o.y, o.color, 'left');
+                    });
+                }
             }
             c.restore();
         }
@@ -1717,6 +1772,277 @@ function renderAgeChart(ageBuckets) {
     });
 }
 
+// ============ Bug 年龄 × 优先级（indicator，2026-11-19）============
+/* 口径：只看未关闭 Bug（status 非 closed/rejected/done，与「未关闭Bug年龄分布」一致）；
+   年龄 = bug.ageDays（后端按 JIRA createdTimestamp 毫秒算，报告日→今天）；
+   分桶与既有年龄图一致：0-3 / 3-7 / 7-14 / 14-30 / 30天+。
+   主图单一指标 = 平均年龄(天)，条尾灰字「N 条 · 最长 M 天」；年龄结构看「表格」热力矩阵。 */
+var AGE_PRIO_ORDER = [
+    { key: 'highest', label: 'Highest' }, { key: 'high', label: 'High' },
+    { key: 'medium', label: 'Medium' }, { key: 'low', label: 'Low' },
+    { key: 'lowest', label: 'Lowest' }, { key: '', label: '未设置' }
+];
+var AGE_PRIO_COLORS = { highest: '#e74c3c', high: '#f39c12', medium: '#3498db', low: '#95a5a6', lowest: '#bdc3c7', '': '#7f8c8d' };
+var AGE_BUCKET_DEFS = [
+    { label: '0-3天', test: function (d) { return d <= 3; } },
+    { label: '3-7天', test: function (d) { return d > 3 && d <= 7; } },
+    { label: '7-14天', test: function (d) { return d > 7 && d <= 14; } },
+    { label: '14-30天', test: function (d) { return d > 14 && d <= 30; } },
+    { label: '30天+', test: function (d) { return d > 30; } }
+];
+
+function agePrioKey(bug) {
+    var k = String((bug && bug.severity) || '').toLowerCase();
+    return (/^(highest|high|medium|low|lowest)$/.test(k)) ? k : '';
+}
+
+function buildAgePrioStats() {
+    var open = (Dashboard.allBugs || []).filter(function (b) {
+        var st = String(b.status || '').toLowerCase();
+        return st !== 'closed' && st !== 'rejected' && st !== 'done';
+    });
+    var map = {};
+    open.forEach(function (b) {
+        var k = agePrioKey(b);
+        if (!map[k]) {
+            map[k] = { key: k, count: 0, ages: [], buckets: AGE_BUCKET_DEFS.map(function () { return 0; }), oldest: null };
+        }
+        var g = map[k];
+        var d = (typeof b.ageDays === 'number' && isFinite(b.ageDays)) ? b.ageDays : 0;
+        g.count++;
+        g.ages.push(d);
+        for (var i = 0; i < AGE_BUCKET_DEFS.length; i++) {
+            if (AGE_BUCKET_DEFS[i].test(d)) { g.buckets[i]++; break; }
+        }
+        if (!g.oldest || d > g.oldest.ageDays) {
+            g.oldest = { bugId: b.bugId, ageDays: d, owner: b.owner || '', summary: b.summary || '' };
+        }
+    });
+    return AGE_PRIO_ORDER.map(function (o) {
+        var g = map[o.key];
+        if (!g) return null;
+        var sorted = g.ages.slice().sort(function (a, b) { return a - b; });
+        var sum = sorted.reduce(function (a, b) { return a + b; }, 0);
+        var mid = sorted.length
+            ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2)
+            : 0;
+        g.label = o.label;
+        g.avg = sorted.length ? Math.round(sum / sorted.length * 10) / 10 : 0;
+        g.median = Math.round(mid * 10) / 10;
+        g.max = sorted.length ? sorted[sorted.length - 1] : 0;
+        g.old30 = g.buckets[AGE_BUCKET_DEFS.length - 1];
+        return g;
+    }).filter(Boolean);
+}
+
+function renderAgePrioSummary(stats) {
+    var box = document.getElementById('age-prio-summary');
+    if (!box) return;
+    var total = stats.reduce(function (s, g) { return s + g.count; }, 0);
+    // 平均值按条数加权（各档 avg × count 反推，避免再扫一遍全量）
+    var wAvg = total ? stats.reduce(function (s, g) { return s + g.avg * g.count; }, 0) / total : 0;
+    var old30 = stats.reduce(function (s, g) { return s + g.old30; }, 0);
+    var worst = stats.slice().sort(function (a, b) { return b.avg - a.avg; })[0];
+    box.innerHTML =
+        '<div class="owner-sum"><b>' + total + '</b><span>未关闭 Bug</span></div>' +
+        '<div class="owner-sum"><b>' + (Math.round(wAvg * 10) / 10) + '</b><span>平均年龄（天）</span></div>' +
+        '<div class="owner-sum"><b class="os-name">' + (worst ? worst.label : '-') + '</b><span>最老优先级 · 平均 ' + (worst ? worst.avg : 0) + ' 天</span></div>' +
+        '<div class="owner-sum"><b>' + old30 + '</b><span>30天+ 未关闭 · 占 ' + (total ? (old30 / total * 100).toFixed(1) : '0.0') + '%</span></div>';
+}
+
+function renderAgePrioCards(stats) {
+    var box = document.getElementById('age-prio-cards');
+    if (!box) return;
+    if (!stats.length) { box.innerHTML = '<div class="oc-empty">暂无未关闭 Bug</div>'; return; }
+    var maxAvg = stats.reduce(function (m, g) { return Math.max(m, g.avg); }, 1) || 1;
+    box.innerHTML = stats.map(function (g) {
+        var w = Math.max(6, Math.round(g.avg / maxAvg * 100));
+        return '<div class="owner-card" data-prio="' + g.key + '" title="点击 → 明细表按 ' + g.label + ' 筛选">' +
+            '<div class="oc-name">' + g.label + '</div>' +
+            '<div class="oc-open">' + g.avg + '<i>天 平均</i></div>' +
+            '<div class="oc-bar"><b style="width:' + w + '%;background:' + (AGE_PRIO_COLORS[g.key] || '#7f8c8d') + '"></b></div>' +
+            '<div class="oc-meta">' + g.count + ' 条 · 中位 ' + g.median + ' 天 · 最长 ' + g.max + ' 天</div>' +
+            '<div class="oc-dom">30天+ ' + g.old30 + ' 条</div>' +
+            '</div>';
+    }).join('');
+}
+
+function renderAgePrioTable(stats) {
+    var tbl = document.getElementById('age-prio-table');
+    if (!tbl) return;
+    var maxCell = 1;
+    stats.forEach(function (g) { g.buckets.forEach(function (n) { if (n > maxCell) maxCell = n; }); });
+    function heat(n) {
+        if (!n) return '';
+        var a = (0.14 + 0.5 * (n / maxCell)).toFixed(2);
+        return 'background:rgba(255,159,67,' + a + ');';
+    }
+    var head = '<thead><tr><th>优先级</th>' +
+        AGE_BUCKET_DEFS.map(function (b) { return '<th class="sla-num-head" title="未关闭 Bug 的已开天数落在 ' + b.label + ' 的条数">' + b.label + '</th>'; }).join('') +
+        '<th class="sla-num-head" title="该优先级未关闭总数">合计</th>' +
+        '<th class="sla-num-head" title="平均已开天数（报告日 → 今天）">平均(天)</th>' +
+        '<th class="sla-num-head" title="最老一条的已开天数">最长(天)</th></tr></thead>';
+    var rows = stats.map(function (g) {
+        return '<tr data-prio="' + g.key + '">' +
+            '<td><span class="severity-badge severity-' + (g.key || 'none') + '">' + g.label + '</span></td>' +
+            g.buckets.map(function (n, i) {
+                return '<td class="n" style="' + heat(n) + '" title="' + g.label + ' · ' + AGE_BUCKET_DEFS[i].label + '：' + n + ' 条">' + (n || '-') + '</td>';
+            }).join('') +
+            '<td class="n"><b>' + g.count + '</b></td>' +
+            '<td class="n">' + g.avg + '</td>' +
+            '<td class="n">' + g.max + '</td></tr>';
+    }).join('');
+    var total = stats.reduce(function (s, g) { return s + g.count; }, 0);
+    var sumAvg = stats.reduce(function (s, g) { return s + g.avg * g.count; }, 0);
+    var sumMax = stats.reduce(function (s, g) { return Math.max(s, g.max); }, 0);
+    var totalRow = '<tr style="font-weight:600;">' +
+        '<td>合计</td>' +
+        AGE_BUCKET_DEFS.map(function (b, i) {
+            var n = stats.reduce(function (s, g) { return s + g.buckets[i]; }, 0);
+            return '<td class="n">' + (n || '-') + '</td>';
+        }).join('') +
+        '<td class="n">' + total + '</td>' +
+        '<td class="n">' + (total ? Math.round(sumAvg / total * 10) / 10 : 0) + '</td>' +
+        '<td class="n">' + sumMax + '</td></tr>';
+    tbl.innerHTML = head + '<tbody>' + rows + totalRow + '</tbody>';
+}
+
+function setAgePrioView(view) {
+    Dashboard.agePrioView = view || 'chart';
+    var wrap = document.getElementById('age-prio-chart-wrapper');
+    var cards = document.getElementById('age-prio-cards');
+    var table = document.getElementById('age-prio-table-wrap');
+    if (wrap) wrap.style.display = Dashboard.agePrioView === 'chart' ? '' : 'none';
+    if (cards) cards.style.display = Dashboard.agePrioView === 'cards' ? 'grid' : 'none';
+    if (table) table.style.display = Dashboard.agePrioView === 'table' ? '' : 'none';
+    [].forEach.call(document.querySelectorAll('#age-prio-card .owner-tab'), function (b) {
+        b.classList.toggle('active', b.getAttribute('data-view') === Dashboard.agePrioView);
+    });
+}
+
+function applyPriorityFilterToTable(key) {
+    var sel = document.getElementById('filter-severity');
+    if (!sel) return;
+    // key 为空 = 「未设置优先级」组（所有 Bug 都应设置优先级，这组是待补名单）
+    sel.value = key ? key : '__EMPTY__';
+    var sec = document.getElementById('bug-table-section');
+    if (sec) sec.style.display = 'block';
+    // filterBugs() 是 200ms 防抖，点图后要立刻见结果 → 直接调 applyTableFilters（与 applyOwnerFilterToTable 一致）
+    if (typeof applyTableFilters === 'function') applyTableFilters();
+    if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderAgeByPriority() {
+    var canvas = document.getElementById('chart-age-prio');
+    if (!canvas) return;
+    var stats = buildAgePrioStats();
+    Dashboard.agePrioStats = stats;
+
+    renderAgePrioSummary(stats);
+    renderAgePrioCards(stats);
+    renderAgePrioTable(stats);
+    setAgePrioView(Dashboard.agePrioView || 'chart');
+
+    var note = document.getElementById('age-prio-scope-note');
+    var total = stats.reduce(function (s, g) { return s + g.count; }, 0);
+    if (note) {
+        note.textContent = '（未关闭 ' + total + ' 条参与统计｜年龄 = 报告日 → 今天'
+            + '｜点柱/行 → 明细表按优先级筛选）';
+    }
+
+    if (Dashboard.charts.agePrio) { Dashboard.charts.agePrio.destroy(); Dashboard.charts.agePrio = null; }
+    if (!stats.length) return;
+
+    var rows = stats;
+
+    // 竖状柱：柱顶写「平均 N 天」，再上面一行灰字「N 条 · 最长 M 天」
+    var agePrioBarLabels = {
+        id: 'agePrioBarLabels',
+        afterDatasetsDraw: function (chart) {
+            if (!chart || !chart.data || !chart.data.datasets.length) return;
+            var c = chart.ctx, meta = chart.getDatasetMeta(0);
+            c.save();
+            c.textAlign = 'center';
+            c.textBaseline = 'bottom';
+            (meta.data || []).forEach(function (bar, i) {
+                var g = rows[i]; if (!g) return;
+                c.font = 'bold 13px sans-serif';
+                c.fillStyle = '#333333';
+                c.fillText(g.avg + ' 天', bar.x, bar.y - 7);
+                c.font = '11px sans-serif';
+                c.fillStyle = '#777777';
+                c.fillText(g.count + ' 条 · 最长 ' + g.max + ' 天', bar.x, bar.y - 23);
+            });
+            c.restore();
+        }
+    };
+
+    var maxAvg = rows.reduce(function (m, g) { return Math.max(m, g.avg); }, 1) || 1;
+
+    Dashboard.charts.agePrio = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: rows.map(function (g) { return g.label; }),
+            datasets: [{
+                label: '平均年龄(天)',
+                data: rows.map(function (g) { return g.avg; }),
+                backgroundColor: rows.map(function (g) { return AGE_PRIO_COLORS[g.key] || '#7f8c8d'; }),
+                borderRadius: 4, borderSkipped: false,
+                barPercentage: 0.55, categoryPercentage: 0.74
+            }]
+        },
+        plugins: [agePrioBarLabels],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 36, left: 8, right: 8 } },
+            interaction: { mode: 'index', intersect: false },
+            onClick: function (evt, elements) {
+                if (elements && elements.length && rows[elements[0].index]) {
+                    applyPriorityFilterToTable(rows[elements[0].index].key);
+                }
+            },
+            onHover: function (evt, elements) {
+                canvas.style.cursor = (elements && elements.length && rows[elements[0].index] && rows[elements[0].index].key) ? 'pointer' : 'default';
+            },
+            plugins: {
+                legend: { display: false },
+                barDataLabel: false,
+                pieLabel: false,
+                tooltip: {
+                    mode: 'index', intersect: false, displayColors: false,
+                    callbacks: {
+                        title: function (items) { return items.length ? items[0].label : ''; },
+                        label: function (item) {
+                            var g = rows[item.dataIndex] || {};
+                            return '平均 ' + g.avg + ' 天 · 中位 ' + g.median + ' 天 · 最长 ' + g.max + ' 天';
+                        },
+                        footer: function (items) {
+                            var g = rows[(items[0] || {}).dataIndex]; if (!g) return '';
+                            return ['未关闭 ' + g.count + ' 条｜30天+ ' + g.old30 + ' 条',
+                                (g.oldest ? '最老：' + g.oldest.bugId + '（' + g.oldest.ageDays + ' 天）' : ''),
+                                '点击该柱 → 下方明细表按该优先级筛选'];
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { autoSkip: false } },
+                // 顶部留白给柱顶两行标注：轴上限抬到最大值的 1.3 倍
+                y: { beginAtZero: true, suggestedMax: Math.ceil(maxAvg * 1.3), title: { display: true, text: '平均已开天数' }, ticks: { precision: 0 } }
+            }
+        }
+    });
+}
+
+// 卡片/表格行点击 → 明细表按优先级筛选（事件委托，避免 inline onclick 引号炸裂）
+document.addEventListener('click', function (ev) {
+    var card = ev.target.closest ? ev.target.closest('#age-prio-cards .owner-card') : null;
+    if (card) { applyPriorityFilterToTable(card.getAttribute('data-prio')); return; }
+    var row = ev.target.closest ? ev.target.closest('#age-prio-table tbody tr[data-prio]') : null;
+    if (row) applyPriorityFilterToTable(row.getAttribute('data-prio'));
+});
+
 // ============ Trend Zoom Control ============
 
 function resetTrendZoom() {
@@ -1797,7 +2123,10 @@ function applyTableFilters() {
 
         if (summaryFilter && (bug.summary || bug.description).toLowerCase().indexOf(summaryFilter) === -1) return false;
         if (statusFilter && bug.status !== statusFilter) return false;
-        if (severityFilter && bug.severity !== severityFilter) return false;
+        // severity: '__EMPTY__' = 未设置优先级（严格空值），其余为精确匹配
+        if (severityFilter === '__EMPTY__') {
+            if (String(bug.severity || '').trim()) return false;
+        } else if (severityFilter && bug.severity !== severityFilter) return false;
         if (ownerFilter && bug.owner.toLowerCase().indexOf(ownerFilter) === -1) return false;
         // Domain 精确过滤('__EMPTY__' = 未设置 Domain)
         if (domainFilter) {
@@ -1888,11 +2217,11 @@ function updateKPIFromFiltered(bugs) {
     });
 }
 
-/* ================= SLA 阶段1 · 只读建议（绝不写 JIRA）=================
+/* ================= SLA 阶段1 · 只读（当前：提醒模式，暂不执行）=================
    口径（2026-11-17 与 Kobe 对齐，写进 PPT proposal 前先用它跑数）：
    · 心跳 cadence（起步档）: Highest 2d / High 3d / Medium 7d / Low 14d
-   · 黄牌 = 静默 > 1× 心跳（只通知、不升档）
-   · 红牌 = 静默 > 2× 心跳 → 建议升一档；**升档后心跳计时从升档时刻重置**（防连跳两级）
+   · 黄牌 = 静默 > 1× 心跳（只提醒、不升档）
+   · 红牌 = 静默 > 2× 心跳 → 严重静默提醒（催办）；**升档后心跳计时从升档时刻重置**（防连跳两级）
    · 修复完成 SLA: Highest 7d / High 14d / Medium 30d / Low 60d（从报告日起算）
    · 挂起 label: sla-paused（静默不计、不升档）
    · 已升档 label: sla-escalated + sla-from-<原档>（只用于追踪，不自动回退）
@@ -1902,6 +2231,14 @@ function updateKPIFromFiltered(bugs) {
 var SLA_FIX = { highest: 7, high: 14, medium: 30, low: 60 };
 var SLA_CAD = { highest: 2, high: 3, medium: 7, low: 14 };
 var SLA_NEXT = { low: 'medium', medium: 'high', high: 'highest', highest: null };
+/* 2026-11-19 Kobe: 暂时先不执行 SLA —— 仅开始用 SLA 做提醒。
+   SLA_ENFORCE = false 时：
+     · 照常算黄牌/红牌（静默 > 1× / 2× 心跳）与修复 SLA，但全部只当「提醒」；
+     · 不给升档建议（shouldEscalate / atTop 恒 false）、不判违约、不展示「已升档清单」、
+       不提 sla-escalated / sla-from-* 标签协议，明细表「升档」列只剩「挂起」状态；
+     · 没有任何 JIRA 写操作（本来也没有）。
+   将来要真正执行 SLA（或接阶段2 自动写 JIRA）时，把它置 true 即可恢复原有判定与清单。 */
+var SLA_ENFORCE = false;
 // 排序用：优先级序位（0 = 最高）
 var SLA_RANK = { highest: 0, high: 1, medium: 2, low: 3 };
 var SLA_NAME = { highest: 'Highest', high: 'High', medium: 'Medium', low: 'Low' };
@@ -1933,15 +2270,17 @@ function slaOf(bug) {
     var red = !closed && !paused && cad !== null && silent !== null && silent > 2 * cad;
     var warn = !closed && !paused && cad !== null && silent !== null && !red && silent > cad;
     var next = SLA_NEXT[p] || null;
+    // 提醒模式（SLA_ENFORCE=false）不产生任何升档建议：只提醒，不判违约、不给档位
+    var escalateOn = SLA_ENFORCE && red && !escalated;
     return {
         prio: p, cadence: cad, fixTarget: fix, daysOpen: daysOpen, silent: silent,
         fixRemain: (daysOpen === null || fix === null) ? null : fix - daysOpen,
         fixOver: (daysOpen === null || fix === null) ? 0 : Math.max(0, daysOpen - fix),
         paused: paused, escalated: escalated, escFrom: escFrom,
         warn: warn, red: red,
-        shouldEscalate: red && !escalated && !!next,
-        atTop: red && !escalated && !next,
-        escTarget: (red && !escalated && next) ? next : null,
+        shouldEscalate: escalateOn && !!next,
+        atTop: escalateOn && !next,
+        escTarget: (escalateOn && next) ? next : null,
         closed: closed
     };
 }
@@ -1984,6 +2323,8 @@ function renderSlaPanel(bugs) {
     var all = (bugs || []).filter(function (b) { return b.sla; });
     if (!all.length) return;
     var open = all.filter(function (b) { return !b.sla.closed; });
+    // 所有 Bug 都必须设置优先级：空优先级的未关闭单拿不到心跳阈值，永远不黄不红 —— 单独提醒
+    var noPrioOpen = open.filter(function (b) { return !String(b.severity || '').trim(); });
     var warn = open.filter(function (b) { return b.sla.warn; });
     var red = open.filter(function (b) { return b.sla.red; });
     var esc = open.filter(function (b) { return b.sla.shouldEscalate; });
@@ -2005,25 +2346,35 @@ function renderSlaPanel(bugs) {
     if (chips) {
         chips.innerHTML =
             '<div class="sla-chip sla-chip-warn"><b>' + warn.length + '</b><span>黄牌（静默 &gt; 1× 心跳）</span></div>' +
-            '<div class="sla-chip sla-chip-red"><b>' + red.length + '</b><span>红牌（静默 &gt; 2× 心跳）</span></div>' +
+            '<div class="sla-chip sla-chip-red"><b>' + red.length + '</b><span>红牌（静默 &gt; 2× 心跳' + (SLA_ENFORCE ? '' : ' · 催办') + '）</span></div>' +
             '<div class="sla-chip sla-chip-fix"><b>' + fixOver.length + '</b><span>修复超期</span><i>临期 ' + near.length + '</i></div>' +
             '<div class="sla-chip"><b>' + paused.length + '</b><span>挂起 sla-paused</span></div>' +
-            '<div class="sla-chip"><b>' + escalated.length + '</b><span>已升档（追踪中）</span></div>' +
+            (SLA_ENFORCE ? '<div class="sla-chip"><b>' + escalated.length + '</b><span>已升档（追踪中）</span></div>' : '') +
             '<div class="sla-chip sla-chip-triage"><b>' + triage.length + '</b><span>待接单（triage 队列）</span>' +
-            (triage.length ? '<i>最久 ' + (triage[0].sla.daysOpen === null ? '?' : triage[0].sla.daysOpen) + ' 天</i>' : '') + '</div>';
+            (triage.length ? '<i>最久 ' + (triage[0].sla.daysOpen === null ? '?' : triage[0].sla.daysOpen) + ' 天</i>' : '') + '</div>' +
+            (noPrioOpen.length ? '<div class="sla-chip sla-chip-red sla-chip-click" onclick="applyPriorityFilterToTable(\'\')" title="这些单 JIRA 优先级为空 → 拿不到心跳阈值，不参与黄牌/红牌提醒；点击筛选明细表去补优先级">' +
+                '<b>' + noPrioOpen.length + '</b><span>优先级未设置（不参与提醒）</span></div>' : '');
     }
+
+    // 面板标题与「已升档清单」跟随 SLA_ENFORCE：提醒模式下不出现任何执行/升档语义
+    var titleEl = document.getElementById('sla-panel-title');
+    if (titleEl) titleEl.textContent = SLA_ENFORCE ? 'SLA 阶段1 · 只读建议' : 'SLA 提醒 · 暂不执行（只读）';
+    var escBlock = document.getElementById('sla-escalated-block');
+    if (escBlock) escBlock.style.display = SLA_ENFORCE ? '' : 'none';
+    var actHead = document.getElementById('sla-red-act-head');
+    if (actHead) actHead.textContent = SLA_ENFORCE ? '处理建议' : '提醒动作';
 
     var note = document.getElementById('sla-scope-note');
     if (note) {
-        note.textContent = '（数据截至 ' + slaFmtTime(Dashboard.dataFetchedAt) + ' · 未关闭 ' + open.length +
-            ' 条参与判定；只读建议，JIRA 优先级需人工修改）';
+        note.textContent = '（数据截至 ' + slaFmtTime(Dashboard.dataFetchedAt) + ' · 未关闭 ' + open.length + ' 条参与判定；' +
+            (SLA_ENFORCE ? '只读建议，JIRA 优先级需人工修改）' : '只提醒，不改 JIRA、不升档、不计违约）');
     }
 
     function rowWarn(b) {
         var s = b.sla;
         var ttl = bugTitle(b);
         return '<tr>' +
-            '<td class="k"><a class="jira-key-link" href="' + (b.jiraUrl || (App.jiraBaseUrl + b.bugId)) + '" target="_blank">' + b.bugId + '</a></td>' +
+            '<td class="k"><a class="jira-key-link" href="' + jiraHref(b) + '" target="_blank">' + b.bugId + '</a></td>' +
             '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
             '<td>' + SLA_NAME[s.prio] + '</td>' +
             '<td class="n sla-warn-text" title="已静默 ' + s.silent + ' 天，超过 1× 心跳 ' + s.cadence + ' 天，但未到红牌线 ' + (2 * s.cadence) + ' 天">' + s.silent + '</td>' +
@@ -2032,12 +2383,15 @@ function renderSlaPanel(bugs) {
     function rowRed(b) {
         var s = b.sla;
         var ttl = bugTitle(b), act;
-        if (s.escalated) act = '<span class="sla-badge sla-esc-done">已升档' + (s.escFrom ? '(' + SLA_NAME[s.escFrom] + ')' : '') + '</span>';
+        if (!SLA_ENFORCE) {
+            // 提醒模式：只催办，不给档位建议
+            act = '<span class="sla-badge sla-esc-suggest" title="提醒负责人更新进展/给 ETA；本阶段不执行 SLA，不升档">催办 · 更新进展</span>';
+        } else if (s.escalated) act = '<span class="sla-badge sla-esc-done">已升档' + (s.escFrom ? '(' + SLA_NAME[s.escFrom] + ')' : '') + '</span>';
         else if (s.atTop) act = '<span class="sla-badge sla-esc-top">到顶 · 升级到人</span>';
         else if (s.shouldEscalate) act = '<span class="sla-badge sla-esc-suggest">→ ' + SLA_NAME[s.escTarget] + '（升一档）</span>';
         else act = '—';
         return '<tr>' +
-            '<td class="k"><a class="jira-key-link" href="' + (b.jiraUrl || (App.jiraBaseUrl + b.bugId)) + '" target="_blank">' + b.bugId + '</a></td>' +
+            '<td class="k"><a class="jira-key-link" href="' + jiraHref(b) + '" target="_blank">' + b.bugId + '</a></td>' +
             '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
             '<td>' + SLA_NAME[s.prio] + '</td>' +
             '<td class="n sla-red-text" title="已静默 ' + s.silent + ' 天 > 红牌线 ' + (2 * s.cadence) + ' 天（心跳 ' + s.cadence + ' ×2）">' + s.silent + '</td>' +
@@ -2047,7 +2401,7 @@ function renderSlaPanel(bugs) {
     function rowTracked(b) {
         var s = b.sla, hb = slaHeartbeatCell(s);
         return '<tr>' +
-            '<td class="k"><a class="jira-key-link" href="' + (b.jiraUrl || (App.jiraBaseUrl + b.bugId)) + '" target="_blank">' + b.bugId + '</a></td>' +
+            '<td class="k"><a class="jira-key-link" href="' + jiraHref(b) + '" target="_blank">' + b.bugId + '</a></td>' +
             '<td>' + (s.escFrom ? SLA_NAME[s.escFrom] : '?') + ' → <b>' + SLA_NAME[s.prio] + '</b></td>' +
             '<td class="n ' + (s.red ? 'sla-red-text' : '') + '" title="升档后已静默 ' + (s.silent === null ? '?' : s.silent) + ' 天（心跳计时从升档时刻重置）">' + (s.silent === null ? '-' : s.silent) + '</td>' +
             '<td class="c"><span class="sla-badge ' + hb.cls + '">' + hb.text + '</span></td>' +
@@ -2061,7 +2415,7 @@ function renderSlaPanel(bugs) {
                        : (s.daysOpen + ' / ' + s.fixTarget + ' · 剩 ' + s.fixRemain + ' 天');
         var cls = over ? 'sla-red-text' : 'sla-warn-text';
         return '<tr>' +
-            '<td class="k"><a class="jira-key-link" href="' + (b.jiraUrl || (App.jiraBaseUrl + b.bugId)) + '" target="_blank">' + b.bugId + '</a></td>' +
+            '<td class="k"><a class="jira-key-link" href="' + jiraHref(b) + '" target="_blank">' + b.bugId + '</a></td>' +
             '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
             '<td>' + SLA_NAME[s.prio] + '</td>' +
             '<td class="c ' + cls + '" title="已开 ' + s.daysOpen + ' 天 / 修复 SLA ' + s.fixTarget + ' 天（从报告日 ' + (b.reportDate || '-') + ' 起算）">' + txt + '</td>' +
@@ -2085,7 +2439,7 @@ function renderSlaPanel(bugs) {
         var noOwner = !b.owner || /^tbd$/i.test(b.owner);
         var comp = (b.components && b.components.length) ? b.components.join(', ') : '-';
         return '<tr>' +
-            '<td class="k"><a class="jira-key-link" href="' + (b.jiraUrl || (App.jiraBaseUrl + b.bugId)) + '" target="_blank">' + b.bugId + '</a></td>' +
+            '<td class="k"><a class="jira-key-link" href="' + jiraHref(b) + '" target="_blank">' + b.bugId + '</a></td>' +
             '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
             '<td>' + SLA_NAME[s.prio] + '</td>' +
             '<td class="n" title="从报单至今（不做 SLA 判定）">' + slaAgeText(b) + '</td>' +
@@ -2099,7 +2453,7 @@ function renderSlaPanel(bugs) {
         var s = b.sla;
         var ttl = bugTitle(b);
         return '<tr>' +
-            '<td class="k"><a class="jira-key-link" href="' + (b.jiraUrl || (App.jiraBaseUrl + b.bugId)) + '" target="_blank">' + b.bugId + '</a></td>' +
+            '<td class="k"><a class="jira-key-link" href="' + jiraHref(b) + '" target="_blank">' + b.bugId + '</a></td>' +
             '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
             '<td>' + SLA_NAME[s.prio] + '</td>' +
             '<td class="n" title="挂起中：静默 ' + (s.silent === null ? '?' : s.silent) + ' 天不计入黄牌/红牌（但挂起 >2× 心跳未解除视为解除）">' + (s.silent === null ? '-' : s.silent) + '</td>' +
@@ -2157,6 +2511,7 @@ function slaCopyRed() {
     var bugs = (Dashboard.allBugs || []).filter(function (b) { return b.sla && b.sla.red; });
     if (!bugs.length) { slaToast('当前没有红牌单', true); return; }
     function act(s) {
+        if (!SLA_ENFORCE) return '催办 · 更新进展';
         if (s.escalated) return '已升档' + (s.escFrom ? '(' + SLA_NAME[s.escFrom] + ')' : '');
         if (s.atTop) return '到顶·升级到人';
         if (s.shouldEscalate) return '→ ' + SLA_NAME[s.escTarget] + '（升一档）';
@@ -2166,7 +2521,7 @@ function slaCopyRed() {
         return b.bugId + '\t' + SLA_NAME[b.sla.prio] + '\t静默' + b.sla.silent + 'd / 心跳' + b.sla.cadence + 'd\t' +
             act(b.sla) + '\t' + (b.owner || '') + '\t' + bugTitle(b);
     });
-    var text = 'Key\t优先级\t静默/心跳\t处理建议\t负责人\t标题\n' + lines.join('\n') +
+    var text = 'Key\t优先级\t静默/心跳\t' + (SLA_ENFORCE ? '处理建议' : '提醒动作') + '\t负责人\t标题\n' + lines.join('\n') +
         '\n\nKeys: ' + bugs.map(function (b) { return b.bugId; }).join(', ');
     slaCopyWithFallback(text, '红牌清单（' + bugs.length + ' 条）');
 }
@@ -2383,7 +2738,7 @@ function renderBugRows(bugs) {
 
         var tdKey = document.createElement('td');
         var keyLink = document.createElement('a');
-        keyLink.href = bug.jiraUrl || (App.jiraBaseUrl + bug.bugId);
+        keyLink.href = jiraHref(bug);
         keyLink.target = '_blank';
         keyLink.className = 'jira-key-link';
         keyLink.textContent = bug.bugId;
@@ -2404,9 +2759,11 @@ function renderBugRows(bugs) {
         tr.appendChild(tdStatus);
 
         var tdSeverity = document.createElement('td');
+        var sevInfo = severityBadgeInfo(bug);
         var severityBadge = document.createElement('span');
-        severityBadge.className = 'severity-badge severity-' + bug.severity;
-        severityBadge.textContent = bug.severity.charAt(0).toUpperCase() + bug.severity.slice(1);
+        severityBadge.className = 'severity-badge ' + sevInfo.cls;
+        severityBadge.textContent = sevInfo.text;
+        if (sevInfo.cls === 'severity-none') severityBadge.title = 'JIRA 优先级为空 —— 所有 Bug 都必须设置优先级，请到 JIRA 补优先级';
         tdSeverity.appendChild(severityBadge);
         tr.appendChild(tdSeverity);
 
@@ -2466,7 +2823,15 @@ function renderBugRows(bugs) {
         tr.appendChild(tdFix);
 
         var tdEsc = document.createElement('td');
-        if (s.escalated) {
+        if (!SLA_ENFORCE) {
+            // 提醒模式：不展示升档建议，只保留「挂起」状态（其余留空）
+            if (s.paused) {
+                tdEsc.innerHTML = '<span class="sla-badge sla-paused">挂起</span>';
+                tdEsc.title = '挂起中（sla-paused）：静默不计入黄牌/红牌提醒';
+            } else {
+                tdEsc.textContent = '';
+            }
+        } else if (s.escalated) {
             // 列宽有限：徽章只放短标签，原档信息放 title（悬停可见）
             tdEsc.innerHTML = '<span class="sla-badge sla-esc-done">已升档</span>';
             tdEsc.title = '已升档' + (s.escFrom ? '（原档 ' + SLA_NAME[s.escFrom] + '）' : '') + '；请确认升档后是否还在静默';
@@ -2610,10 +2975,10 @@ function csvCell(val) {
 }
 
 function buildBugExportCsv(bugs, results) {
-    var lines = [['Index', 'JIRA ID', 'Description', 'Priority', 'Component', 'Assignee', 'Debug Progress'].map(csvCell).join(',')];
+    var lines = [['Index', 'JIRA ID', 'Description', 'Priority', 'Age(days)', 'Silent(days)', 'Component', 'Assignee', 'Debug Progress'].map(csvCell).join(',')];
     bugs.forEach(function(bug, i) {
         var row = _exportRow(bug, (results || {})[bug.bugId]);
-        lines.push([i + 1, row.key, row.description, row.priority, row.component, row.assignee, row.progress].map(csvCell).join(','));
+        lines.push([i + 1, row.key, row.description, row.priority, row.age, row.silent, row.component, row.assignee, row.progress].map(csvCell).join(','));
     });
     // UTF-8 BOM: Excel 直接双击打开不乱码
     return '\ufeff' + lines.join('\r\n') + '\r\n';
@@ -2640,10 +3005,19 @@ function _exportProgressText(r) {
 }
 
 function _exportRow(bug, r) {
+    // 年龄/静默与 Bug 明细表同口径：
+    //   年龄 = ageDays（后端按 createdTimestamp 毫秒算，缺失则回退 reportDate 日期差）
+    //   静默 = 今天 − JIRA updated（与 slaOf 的 silent 完全一致）
+    var s = bug.sla || slaOf(bug);
+    var age = (bug.ageDays !== undefined && bug.ageDays !== null) ? bug.ageDays : s.daysOpen;
+    var silent = s.silent;
     return {
         key: bug.bugId,
+        jiraUrl: bug.jiraUrl || '',
         description: bug.summary || bug.description || '',
         priority: jiraPriorityLabel(bug),
+        age: (age === null || age === undefined) ? '' : age,
+        silent: (silent === null || silent === undefined) ? '' : silent,
         component: (bug.components && bug.components.length ? bug.components.join(', ') : 'TBD'),
         assignee: bug.owner || '',
         progress: _exportProgressText(r)
@@ -2793,14 +3167,23 @@ function switchExportTab(idx) {
     var tb = document.getElementById('export-tbody');
     if (!tb) return;
     if (!g.rows.length) {
-        tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#8b93a7;padding:18px;">该优先级下暂无 Bug</td></tr>';
+        tb.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b93a7;padding:18px;">该优先级下暂无 Bug</td></tr>';
     } else {
         tb.innerHTML = g.rows.map(function(r, i) {
+            // jira-dashboard.html 是独立页（不加载 globals.js，没有全局 App），
+            // 所以优先用 bug 自带的 jiraUrl，其次才是 App.jiraBaseUrl，两者都没有就渲染纯文本，绝不能让 App 抛 ReferenceError
+            var base = (typeof App !== 'undefined' && App && App.jiraBaseUrl) ? App.jiraBaseUrl : '';
+            var href = r.jiraUrl || (base ? base + r.key : '');
+            var keyCell = href
+                ? '<a href="' + escapeHtml(href) + '" target="_blank" style="color:#4da3ff;">' + escapeHtml(r.key) + '</a>'
+                : escapeHtml(r.key);
             return '<tr>'
                 + '<td style="text-align:right;color:#8b93a7;">' + (i + 1) + '</td>'
-                + '<td><a href="' + escapeHtml(App.jiraBaseUrl + r.key) + '" target="_blank" style="color:#4da3ff;">' + escapeHtml(r.key) + '</a></td>'
+                + '<td>' + keyCell + '</td>'
                 + '<td>' + escapeHtml(r.description) + '</td>'
                 + '<td>' + escapeHtml(r.priority) + '</td>'
+                + '<td style="text-align:right;font-variant-numeric:tabular-nums;">' + escapeHtml(r.age) + '</td>'
+                + '<td style="text-align:right;font-variant-numeric:tabular-nums;">' + escapeHtml(r.silent) + '</td>'
                 + '<td>' + escapeHtml(r.component) + '</td>'
                 + '<td>' + escapeHtml(r.assignee) + '</td>'
                 + '<td style="white-space:pre-wrap;">' + escapeHtml(r.progress) + '</td>'
@@ -3705,7 +4088,7 @@ function renderSearchResults(bugs, totalCount, keyword) {
         row1.className = 'search-result-row1';
 
         var keyLink = document.createElement('a');
-        keyLink.href = bug.jiraUrl || (App.jiraBaseUrl + bug.bugId);
+        keyLink.href = jiraHref(bug);
         keyLink.target = '_blank';
         keyLink.className = 'search-result-key';
         highlightTextNodes(bug.bugId, keyword, keyLink);
@@ -3717,8 +4100,9 @@ function renderSearchResults(bugs, totalCount, keyword) {
         row1.appendChild(statusBadge);
 
         var severityBadge = document.createElement('span');
-        severityBadge.className = 'severity-badge severity-' + bug.severity;
-        severityBadge.textContent = bug.severity.charAt(0).toUpperCase() + bug.severity.slice(1);
+        var sevInfo2 = severityBadgeInfo(bug);
+        severityBadge.className = 'severity-badge ' + sevInfo2.cls;
+        severityBadge.textContent = sevInfo2.text;
         row1.appendChild(severityBadge);
 
         item.appendChild(row1);

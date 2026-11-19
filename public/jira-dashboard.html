@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JIRA Bug Dashboard - GPU Tracker</title>
     <link rel="stylesheet" href="/css/base.css">
-    <link rel="stylesheet" href="/css/jira-dashboard.css?v=25">
+    <link rel="stylesheet" href="/css/jira-dashboard.css?v=28">
     <link rel="stylesheet" href="/css/theme-kpi.css?v=7">
     <style id="theme-dashboard">
         /* jira-dashboard 浅色统一（白底，与 8089 Test Case Manager 同一套观感）：
@@ -340,6 +340,11 @@
                 <div class="kpi-value" id="kpi-overdue">0</div>
                 <div class="kpi-label">超期未关闭(>14天)</div>
             </div>
+            <div class="kpi-card kpi-noprio" id="kpi-noprio-card" title="未关闭 Bug 中 JIRA 优先级为空的数量 · 所有 Bug 都必须设置优先级 · 点击筛选明细表"
+                 onclick="applyPriorityFilterToTable('')" style="cursor:pointer;">
+                <div class="kpi-value" id="kpi-noprio">0</div>
+                <div class="kpi-label">优先级未设置</div>
+            </div>
         </div>
 
         <!-- Charts Grid -->
@@ -399,7 +404,7 @@
                 </div>
             </div>
 
-            <!-- Row 3: Domain + Age -->
+            <!-- Row 2 续：按负责人分布 + 按 Domain 分布（并排） -->
             <div class="chart-card">
                 <div class="chart-header-row">
                     <h3>按 Domain 分布 <span id="domain-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span></h3>
@@ -410,10 +415,33 @@
                 </div>
                 <div class="owner-rest-note" id="domain-rest-note" style="display:none;"></div>
             </div>
+
+            <!-- Row 4: 两张年龄图并排（未关闭Bug年龄分布 + 按优先级，均为竖状柱） -->
             <div class="chart-card">
                 <h3>未关闭Bug年龄分布</h3>
-                <div class="chart-wrapper">
+                <div class="chart-wrapper" id="age-chart-wrapper" style="height:300px;">
                     <canvas id="chart-age"></canvas>
+                </div>
+            </div>
+            <div class="chart-card" id="age-prio-card">
+                <div class="chart-header-row">
+                    <h3>Bug 年龄（按优先级） <span id="age-prio-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span></h3>
+                    <div class="owner-view-tabs">
+                        <button class="owner-tab active" data-view="chart" onclick="setAgePrioView('chart')">图表</button>
+                        <button class="owner-tab" data-view="cards" onclick="setAgePrioView('cards')">卡片</button>
+                        <button class="owner-tab" data-view="table" onclick="setAgePrioView('table')">表格</button>
+                    </div>
+                </div>
+                <div class="owner-summary" id="age-prio-summary"></div>
+                <div class="chart-wrapper" id="age-prio-chart-wrapper" style="height:300px;">
+                    <canvas id="chart-age-prio"></canvas>
+                </div>
+                <div class="owner-cards" id="age-prio-cards" style="display:none;"></div>
+                <div class="owner-table-wrap" id="age-prio-table-wrap" style="display:none;">
+                    <div class="owner-table-scroll">
+                        <table class="dashboard-bug-table owner-table age-prio-table" id="age-prio-table"></table>
+                    </div>
+                    <div class="owner-table-hint">点任意一行 → 下方「Bug 明细列表」按该优先级筛选</div>
                 </div>
             </div>
         </div>
@@ -421,10 +449,10 @@
         <!-- Trend History (cached data) - removed -->
 
         <!-- Bug Detail Table -->
-        <!-- SLA 阶段1：只读建议（黄牌/红牌/修复超期/挂起/已升档，每页 5 条）—— 不改 JIRA，升档需人工执行 -->
+        <!-- SLA 提醒模式（暂不执行 SLA）：黄牌/红牌/修复超期/挂起/待接单，每页 5 条 —— 只提醒，不改 JIRA、不升档 -->
         <div class="chart-card sla-panel" id="sla-panel" style="display:none;">
             <div class="chart-header-row">
-                <h3>SLA 阶段1 · 只读建议 <span id="sla-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span></h3>
+                <h3><span id="sla-panel-title">SLA 提醒 · 暂不执行（只读）</span> <span id="sla-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span></h3>
             </div>
             <div class="sla-chips" id="sla-chips"></div>
             <div class="sla-block">
@@ -467,7 +495,7 @@
                 <div class="sla-empty" id="sla-warn-empty" style="display:none;">当前没有黄牌单（静默都在 1× 心跳以内）</div>
             </div>
             <div class="sla-block">
-                <div class="sla-block-title">红牌清单 <span class="sla-hint">静默 &gt; 2× 心跳 = 违约 —— 「处理建议」列直接告诉你升到哪一档；升完请在 JIRA 里改优先级并打 <code>sla-escalated</code> / <code>sla-from-&lt;原档&gt;</code></span>
+                <div class="sla-block-title">红牌清单 <span class="sla-hint">静默 &gt; 2× 心跳 —— 严重静默提醒：周会点名催办，要求更新进展 / 给 ETA（本阶段只提醒，不升档、不改 JIRA 优先级）</span>
                     <button class="sla-copy-btn" onclick="slaCopyRed()">复制清单</button>
                 </div>
                 <div class="table-wrapper">
@@ -478,7 +506,7 @@
                         </colgroup>
                         <thead><tr>
                             <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">静默(天)</th>
-                            <th class="sla-center-head">处理建议</th><th>Domain</th><th>负责人</th>
+                            <th class="sla-center-head" id="sla-red-act-head">提醒动作</th><th>Domain</th><th>负责人</th>
                         </tr></thead>
                         <tbody id="sla-red-body"></tbody>
                     </table>
@@ -507,7 +535,7 @@
                 <div class="sla-empty" id="sla-fix-empty" style="display:none;">当前没有修复超期或临期的单</div>
             </div>
             <div class="sla-block">
-                <div class="sla-block-title">挂起清单 <span class="sla-hint">打了 <code>sla-paused</code> 的单 —— 静默不计、不升档；挂起 &gt;2× 心跳未解除视为解除并升档</span>
+                <div class="sla-block-title">挂起清单 <span class="sla-hint">打了 <code>sla-paused</code> 的单 —— 静默不计、不提醒；挂起 &gt;2× 心跳未解除视为解除（重新进入提醒）</span>
                     <button class="sla-copy-btn" onclick="slaCopyPaused()">复制清单</button>
                 </div>
                 <div class="table-wrapper">
@@ -526,7 +554,7 @@
                 <div class="sla-pager" id="sla-paused-pager"></div>
                 <div class="sla-empty" id="sla-paused-empty" style="display:none;">当前没有挂起单（没有单打 sla-paused）</div>
             </div>
-            <div class="sla-block">
+            <div class="sla-block" id="sla-escalated-block">
                 <div class="sla-block-title">已升档清单 <span class="sla-hint">已打 <code>sla-escalated</code> 的单 —— 看升档后是否还在睡（静默是否又超新档 2× 心跳）</span></div>
                 <div class="table-wrapper">
                     <table class="dashboard-bug-table sla-table" id="sla-escalated-table">
@@ -544,8 +572,8 @@
                 <div class="sla-pager" id="sla-escalated-pager"></div>
                 <div class="sla-empty" id="sla-escalated-empty" style="display:none;">暂无升档记录（还没有单打上 sla-escalated label）</div>
             </div>
-            <div class="sla-threshold-box">
-                <div class="sla-threshold-title">四段阈值总表</div>
+            <div class="sla-block">
+                <div class="sla-block-title">四段阈值总表</div>
                 <div class="table-wrapper">
                     <table class="dashboard-bug-table sla-table sla-threshold-table" id="sla-threshold-table">
                         <colgroup>
@@ -582,13 +610,14 @@
                     <option value="medium">Medium</option>
                     <option value="low">Low</option>
                     <option value="lowest">Lowest</option>
+                    <option value="__EMPTY__">（未设置优先级）</option>
                 </select>
                 <input type="text" id="filter-owner" placeholder="负责人" class="filter-input" oninput="filterBugs()">
                 <select id="filter-domain" class="filter-select" onchange="filterBugs()" title="按 Domain 过滤（含未设置）">
                     <option value="">全部 Domain</option>
                 </select>
                 <label><input type="checkbox" id="show-closed" onchange="filterBugs()"> 显示已关闭</label>
-                <button id="export-btn" class="refresh-btn" onclick="exportBugDetails()" title="导出当前筛选结果（JIRA ID / 描述 / Priority / Assignee / LLM 归纳的最新 debug progress）">📥 导出Bug明细</button>
+                <button id="export-btn" class="refresh-btn" onclick="exportBugDetails()" title="导出当前筛选结果（JIRA ID / 描述 / Priority / 年龄(天) / 静默(天) / Component / Assignee / LLM 归纳的最新 debug progress）">📥 导出Bug明细</button>
                 <span id="export-status" class="bug-count"></span>
                 <span id="bug-count" class="bug-count"></span>
             </div>
@@ -597,33 +626,33 @@
                 <table class="dashboard-bug-table" id="bug-table">
                     <colgroup>
                         <col style="width:9%">    <!-- Key -->
-                        <col style="width:18.5%"> <!-- 标题 -->
+                        <col style="width:15%">   <!-- 标题 -->
                         <col style="width:6%">    <!-- 状态 -->
                         <col style="width:7%">    <!-- 严重性 -->
-                        <col style="width:9.5%">  <!-- 负责人 -->
+                        <col style="width:9%">    <!-- 负责人 -->
                         <col style="width:6.5%">  <!-- Domain -->
                         <col style="width:8.5%">  <!-- 报告日期 -->
-                        <col style="width:4.5%">  <!-- 年龄(天) -->
-                        <col style="width:4.5%">  <!-- 静默(天) -->
+                        <col style="width:5.8%">  <!-- 年龄(天) -->
+                        <col style="width:5.8%">  <!-- 静默(天) -->
                         <col style="width:8%">    <!-- 心跳 -->
                         <col style="width:6%">    <!-- 修复SLA -->
-                        <col style="width:7.5%">  <!-- 升档 -->
-                        <col style="width:4.5%">  <!-- 智能诊断 -->
+                        <col style="width:7.4%">  <!-- 升档 -->
+                        <col style="width:6%">    <!-- 智能诊断 -->
                     </colgroup>
                     <thead>
                         <tr>
-                            <th data-sort="bugId" onclick="sortBugs('bugId')">Key</th>
-                            <th data-sort="description" onclick="sortBugs('description')">标题</th>
-                            <th data-sort="status" onclick="sortBugs('status')">状态</th>
-                            <th data-sort="severity" onclick="sortBugs('severity')">严重性</th>
-                            <th data-sort="owner" onclick="sortBugs('owner')">负责人</th>
-                            <th data-sort="domain" onclick="sortBugs('domain')">Domain</th>
-                            <th data-sort="reportDate" onclick="sortBugs('reportDate')">报告日期</th>
-                            <th data-sort="ageDays" onclick="sortBugs('ageDays')">年龄(天)</th>
-                            <th class="sla-num-head" data-sort="sla.silent" onclick="sortBugs('sla.silent')">静默(天)</th>
-                            <th class="sla-center-head" data-sort="sla.red" onclick="sortBugs('sla.red')">心跳</th>
-                            <th class="sla-num-head" data-sort="sla.daysOpen" onclick="sortBugs('sla.daysOpen')">修复SLA</th>
-                            <th class="sla-center-head">升档</th><th>智能诊断</th>
+                            <th data-sort="bugId" onclick="sortBugs('bugId')" title="Key">Key</th>
+                            <th data-sort="description" onclick="sortBugs('description')" title="标题">标题</th>
+                            <th data-sort="status" onclick="sortBugs('status')" title="状态">状态</th>
+                            <th data-sort="severity" onclick="sortBugs('severity')" title="严重性">严重性</th>
+                            <th data-sort="owner" onclick="sortBugs('owner')" title="负责人">负责人</th>
+                            <th data-sort="domain" onclick="sortBugs('domain')" title="Domain">Domain</th>
+                            <th data-sort="reportDate" onclick="sortBugs('reportDate')" title="报告日期">报告日期</th>
+                            <th data-sort="ageDays" onclick="sortBugs('ageDays')" title="年龄(天)">年龄(天)</th>
+                            <th class="sla-num-head" data-sort="sla.silent" onclick="sortBugs('sla.silent')" title="静默(天)">静默(天)</th>
+                            <th class="sla-center-head" data-sort="sla.red" onclick="sortBugs('sla.red')" title="心跳">心跳</th>
+                            <th class="sla-num-head" data-sort="sla.daysOpen" onclick="sortBugs('sla.daysOpen')" title="修复SLA">修复SLA</th>
+                            <th class="sla-center-head" title="升档">升档</th><th title="智能诊断">智能诊断</th>
                         </tr>
                     </thead>
                     <tbody id="bug-table-body">
@@ -710,6 +739,8 @@
                             <th style="text-align:left; padding:8px 6px; width:130px; border-bottom:1px solid #e0e0e0;">JIRA ID</th>
                             <th style="text-align:left; padding:8px 6px; border-bottom:1px solid #e0e0e0;">Description</th>
                             <th style="text-align:left; padding:8px 6px; width:90px; border-bottom:1px solid #e0e0e0;">Priority</th>
+                            <th style="text-align:right; padding:8px 6px; width:76px; border-bottom:1px solid #e0e0e0;" title="年龄(天) = 从报单日到今天">Age(days)</th>
+                            <th style="text-align:right; padding:8px 6px; width:84px; border-bottom:1px solid #e0e0e0;" title="静默(天) = 距 JIRA 最后一次更新（评论/状态/字段任一改动都算）">Silent(days)</th>
                             <th style="text-align:left; padding:8px 6px; width:120px; border-bottom:1px solid #e0e0e0;">Component</th>
                             <th style="text-align:left; padding:8px 6px; width:170px; border-bottom:1px solid #e0e0e0;">Assignee</th>
                             <th style="text-align:left; padding:8px 6px; min-width:360px; border-bottom:1px solid #e0e0e0;">Debug Progress</th>
@@ -734,6 +765,6 @@
         #export-tbody tr:hover { background: #f7f9fc; }
     </style>
 
-    <script src="/js/jira-dashboard.js?v=98"></script>
+    <script src="/js/jira-dashboard.js?v=108"></script>
 </body>
 </html>

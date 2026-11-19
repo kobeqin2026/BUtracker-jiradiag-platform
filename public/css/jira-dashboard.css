@@ -1401,6 +1401,18 @@
     .owner-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* ===== Bug 年龄 × 优先级 indicator（2026-11-19）===== */
+.age-prio-table tbody td.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.age-prio-table tbody td { border-left: 1px solid rgba(255,255,255,.04); }
+.age-prio-table tbody td:first-child { border-left: 0; }
+.age-prio-table tbody tr[data-prio] { cursor: pointer; }
+.severity-none { background: #7f8c8d; color: #fff; }
+
+/* 「优先级未设置」KPI 卡片：>0 时标红（所有 Bug 都必须设置优先级） */
+.kpi-noprio { border-left-color: #95a5a6; }
+.kpi-noprio.kpi-alert { border-left-color: #e74c3c; }
+.kpi-noprio.kpi-alert .kpi-value { color: #e74c3c; }
+
 /* ===== SLA 阶段1 · 只读建议面板（2026-11-17）===== */
 .sla-panel { margin-bottom: 18px; }
 .sla-chips { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 14px; }
@@ -1408,6 +1420,8 @@
 .sla-chip b { display:block; font-size:20px; line-height:1.2; color:#12395e; }
 .sla-chip span { font-size:12px; color:#7a828c; }
 .sla-chip i { font-size:11px; color:#7a828c; font-style:normal; margin-left:6px; }
+.sla-chip-click { cursor: pointer; }
+.sla-chip-click:hover { border-color:#c0392b; box-shadow:0 0 0 2px rgba(192,57,43,.12); }
 .sla-chip-warn b { color:#d68910; }
 .sla-chip-red b, .sla-chip-fix b { color:#c0392b; }
 .sla-block { margin: 14px 0 4px; }
@@ -1440,8 +1454,6 @@
 .dashboard-bug-table th.sla-center-head, .sla-table th.sla-center-head { text-align: center; }
 .sla-table td.n { text-align: right; }
 .sla-table td.k a { display: inline-block; }
-.sla-threshold-box { margin-top: 14px; padding: 12px 14px 10px; border: 1px solid #e6e8eb; border-radius: 6px; background: #fafbfc; }
-.sla-threshold-title { font-size: 12.5px; font-weight: 600; color: #12395e; margin-bottom: 8px; }
 .sla-threshold-table { background: #ffffff; }
 .sla-threshold-table th, .sla-threshold-table td { padding: 7px 12px; font-size: 12px; }
 

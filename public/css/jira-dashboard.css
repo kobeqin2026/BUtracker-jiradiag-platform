@@ -1494,7 +1494,6 @@
 .sla-pg-btn[disabled] { color: #b6bcc4; border-color: #e3e6ea; cursor: default; background: #fafbfc; }
 
 /* 待接单（triage 队列）：队列计数用蓝灰，和告警色区分开 —— 此列不做 SLA 判定 */
-.sla-chip-triage b { color: #2563eb; }
 
 /* ── Bug 明细表：13 列定宽 + 单行省略，保证最后一列「智能诊断」不被挤出可视区 ── */
 #bug-table { table-layout: fixed; min-width: 1024px; font-size: 12.5px; }
@@ -1504,3 +1503,28 @@
 #bug-table td .sla-badge { padding: 1px 5px; font-size: 11.5px; vertical-align: middle; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 #bug-table td .status-badge, #bug-table td .severity-badge { padding: 1px 4px; font-size: 11px; vertical-align: middle; }
 #bug-table .diag-btn { padding: 1px 5px; line-height: 1.2; font-size: 12px; }
+
+
+/* ===== SLA 每周提醒邮件（手动导出）弹窗 ===== */
+.sla-remind-btn { margin-left: 10px; vertical-align: middle; }
+.sla-remind-card { width: 1180px; max-width: 96vw; height: 84vh; background: #ffffff; border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(18, 57, 94, .28); display: flex; flex-direction: column; overflow: hidden; }
+.sla-remind-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #e6e8eb;
+  font-size: 14px; color: #12395e; }
+.sla-remind-meta { font-size: 12px; color: #7a828c; font-weight: 400; }
+.sla-remind-actions { margin-left: auto; display: flex; gap: 8px; }
+.sla-remind-body { flex: 1; display: flex; min-height: 0; }
+.sla-remind-list { width: 268px; border-right: 1px solid #e6e8eb; overflow-y: auto; background: #fafbfc; }
+.sla-remind-item { padding: 9px 14px; border-bottom: 1px solid #eef0f3; cursor: pointer; }
+.sla-remind-item:hover { background: #f1f5fa; }
+.sla-remind-item.active { background: #e8f0f9; box-shadow: inset 3px 0 0 #12395e; }
+.sla-remind-name { font-size: 13px; color: #12395e; font-weight: 600; }
+.sla-remind-sub { font-size: 11.5px; color: #7a828c; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.sla-remind-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 8px; background: #eceff3; color: #4a545f; }
+.sla-remind-tag-red { background: #fdecea; color: #c0392b; }
+.sla-remind-tag-ov { background: #e8f0f9; color: #12395e; }
+.sla-remind-preview { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.sla-remind-subject { padding: 10px 16px 0; font-size: 12.5px; color: #333333; font-weight: 600; }
+.sla-remind-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 16px 10px; border-bottom: 1px solid #eef0f3; }
+.sla-remind-to { font-size: 11.5px; color: #7a828c; margin-left: auto; }
+.sla-remind-frame { flex: 1; width: 100%; border: 0; background: #ffffff; }

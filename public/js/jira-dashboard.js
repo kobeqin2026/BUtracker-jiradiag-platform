@@ -2277,6 +2277,8 @@ function slaOf(bug) {
         fixRemain: (daysOpen === null || fix === null) ? null : fix - daysOpen,
         fixOver: (daysOpen === null || fix === null) ? 0 : Math.max(0, daysOpen - fix),
         paused: paused, escalated: escalated, escFrom: escFrom,
+        // 第几次提醒 = 已错过几个完整心跳周期（1 = 第一次提醒；≥3 = 已被提醒 3 个周期以上仍未动）
+        remindN: (cad === null || silent === null) ? null : Math.floor(silent / cad),
         warn: warn, red: red,
         shouldEscalate: escalateOn && !!next,
         atTop: escalateOn && !next,
@@ -2329,19 +2331,11 @@ function renderSlaPanel(bugs) {
     var red = open.filter(function (b) { return b.sla.red; });
     var esc = open.filter(function (b) { return b.sla.shouldEscalate; });
     var atTop = open.filter(function (b) { return b.sla.atTop; });
-    var fixOver = open.filter(function (b) { return (b.sla.fixOver || 0) > 0; });
-    var near = open.filter(function (b) { return b.sla.fixRemain !== null && b.sla.fixRemain >= 0 && b.sla.fixRemain <= Math.max(1, Math.round((b.sla.fixTarget || 0) * 0.2)); });
+    // 挂起（sla-paused）= 暂时不追踪 SLA：静默超期、修复超期、临期全部不计（只留在挂起清单里等解除）
+    var fixOver = open.filter(function (b) { return !b.sla.paused && (b.sla.fixOver || 0) > 0; });
+    var near = open.filter(function (b) { return !b.sla.paused && b.sla.fixRemain !== null && b.sla.fixRemain >= 0 && b.sla.fixRemain <= Math.max(1, Math.round((b.sla.fixTarget || 0) * 0.2)); });
     var paused = open.filter(function (b) { return b.sla.paused; });
     var escalated = all.filter(function (b) { return b.sla.escalated; });
-    // 待接单（triage 队列）：状态仍为 Opened，只排队不做 SLA 判定
-    var triage = open.filter(function (b) { return /^opened$/i.test(b.jiraStatus || ''); })
-        .sort(function (a, b) {
-            var ra = SLA_RANK[a.severity], rb = SLA_RANK[b.severity];
-            ra = (ra === undefined) ? 9 : ra; rb = (rb === undefined) ? 9 : rb;
-            if (ra !== rb) return ra - rb;                              // 优先级高的在前
-            return (b.sla.daysOpen || 0) - (a.sla.daysOpen || 0);       // 同档按已开天数降序
-        });
-
     var chips = document.getElementById('sla-chips');
     if (chips) {
         chips.innerHTML =
@@ -2350,8 +2344,6 @@ function renderSlaPanel(bugs) {
             '<div class="sla-chip sla-chip-fix"><b>' + fixOver.length + '</b><span>修复超期</span><i>临期 ' + near.length + '</i></div>' +
             '<div class="sla-chip"><b>' + paused.length + '</b><span>挂起 sla-paused</span></div>' +
             (SLA_ENFORCE ? '<div class="sla-chip"><b>' + escalated.length + '</b><span>已升档（追踪中）</span></div>' : '') +
-            '<div class="sla-chip sla-chip-triage"><b>' + triage.length + '</b><span>待接单（triage 队列）</span>' +
-            (triage.length ? '<i>最久 ' + (triage[0].sla.daysOpen === null ? '?' : triage[0].sla.daysOpen) + ' 天</i>' : '') + '</div>' +
             (noPrioOpen.length ? '<div class="sla-chip sla-chip-red sla-chip-click" onclick="applyPriorityFilterToTable(\'\')" title="这些单 JIRA 优先级为空 → 拿不到心跳阈值，不参与黄牌/红牌提醒；点击筛选明细表去补优先级">' +
                 '<b>' + noPrioOpen.length + '</b><span>优先级未设置（不参与提醒）</span></div>' : '');
     }
@@ -2378,6 +2370,7 @@ function renderSlaPanel(bugs) {
             '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
             '<td>' + SLA_NAME[s.prio] + '</td>' +
             '<td class="n sla-warn-text" title="已静默 ' + s.silent + ' 天，超过 1× 心跳 ' + s.cadence + ' 天，但未到红牌线 ' + (2 * s.cadence) + ' 天">' + s.silent + '</td>' +
+            '<td class="n sla-warn-text" title="第 ' + s.remindN + ' 次提醒（= 静默 ' + s.silent + ' 天 / 心跳 ' + s.cadence + ' 天）">' + s.remindN + '</td>' +
             '<td>' + (b.domain || '-') + '</td><td>' + (b.owner || '-') + '</td></tr>';
     }
     function rowRed(b) {
@@ -2395,6 +2388,7 @@ function renderSlaPanel(bugs) {
             '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
             '<td>' + SLA_NAME[s.prio] + '</td>' +
             '<td class="n sla-red-text" title="已静默 ' + s.silent + ' 天 > 红牌线 ' + (2 * s.cadence) + ' 天（心跳 ' + s.cadence + ' ×2）">' + s.silent + '</td>' +
+            '<td class="n ' + (s.remindN >= 3 ? 'sla-red-text' : '') + '" title="第 ' + s.remindN + ' 次提醒（= 静默 ' + s.silent + ' 天 / 心跳 ' + s.cadence + ' 天）；≥3 说明这条已被提醒 3 个周期以上仍未动">' + s.remindN + '</td>' +
             '<td class="c">' + act + '</td>' +
             '<td>' + (b.domain || '-') + '</td><td>' + (b.owner || '-') + '</td></tr>';
     }
@@ -2433,22 +2427,6 @@ function renderSlaPanel(bugs) {
         return Math.round(hours / 24) + ' 天';
     }
 
-    function rowTriage(b) {
-        var s = b.sla;
-        var ttl = bugTitle(b);
-        var noOwner = !b.owner || /^tbd$/i.test(b.owner);
-        var comp = (b.components && b.components.length) ? b.components.join(', ') : '-';
-        return '<tr>' +
-            '<td class="k"><a class="jira-key-link" href="' + jiraHref(b) + '" target="_blank">' + b.bugId + '</a></td>' +
-            '<td class="ttl" title="' + escAttr(ttl) + '">' + escHtml(ttl) + '</td>' +
-            '<td>' + SLA_NAME[s.prio] + '</td>' +
-            '<td class="n" title="从报单至今（不做 SLA 判定）">' + slaAgeText(b) + '</td>' +
-            '<td>' + (b.reporter || '-') + '</td>' +
-            '<td class="ttl" title="' + escAttr(comp) + '">' + escHtml(comp) + '</td>' +
-            '<td>' + (b.domain || '-') + '</td>' +
-            '<td>' + (noOwner ? '<span class="sla-red-text">无主</span>' : b.owner) + '</td></tr>';
-    }
-
     function rowPaused(b) {
         var s = b.sla;
         var ttl = bugTitle(b);
@@ -2473,9 +2451,9 @@ function renderSlaPanel(bugs) {
         if (ao !== bo) return ao ? -1 : 1;
         return ao ? (b.sla.fixOver - a.sla.fixOver) : (a.sla.fixRemain - b.sla.fixRemain);
     });
-    Dashboard.slaLists = { triage: triage, warn: warn, red: red, fix: fixRows, paused: paused, escalated: escalated };
-    Dashboard.slaRowFns = { triage: rowTriage, warn: rowWarn, red: rowRed, fix: rowFix, paused: rowPaused, escalated: rowTracked };
-    Dashboard.slaPage = { triage: 1, warn: 1, red: 1, fix: 1, paused: 1, escalated: 1 };
+    Dashboard.slaLists = { warn: warn, red: red, fix: fixRows, paused: paused, escalated: escalated };
+    Dashboard.slaRowFns = { warn: rowWarn, red: rowRed, fix: rowFix, paused: rowPaused, escalated: rowTracked };
+    Dashboard.slaPage = { warn: 1, red: 1, fix: 1, paused: 1, escalated: 1 };
     slaRenderAllLists();
 
     // ---- 附：四段阈值总表（PPT P4 同款，值全部取自 SLA_* 常量，避免两处口径漂移）----
@@ -2530,7 +2508,7 @@ function slaCopyRed() {
 var SLA_PAGE_SIZE = 5;
 
 function slaRenderAllLists() {
-    ['triage', 'warn', 'red', 'fix', 'paused', 'escalated'].forEach(function (name) { slaRenderList(name); });
+    ['warn', 'red', 'fix', 'paused', 'escalated'].forEach(function (name) { slaRenderList(name); });
 }
 
 function slaRenderList(name) {
@@ -2576,21 +2554,6 @@ function slaPageGo(name, delta) {
     slaRenderList(name);
 }
 
-function slaCopyTriage() {
-    var arr = (Dashboard.slaLists && Dashboard.slaLists.triage) || [];
-    if (!arr.length) { slaToast('待接单队列为空', true); return; }
-    var lines = arr.map(function (b) {
-        var s = b.sla || {};
-        var comp = (b.components && b.components.length) ? b.components.join(', ') : '-';
-        var owner = (!b.owner || /^tbd$/i.test(b.owner)) ? '无主' : b.owner;
-        return b.bugId + '\t' + SLA_NAME[s.prio] + '\t' + (s.daysOpen === null ? '-' : s.daysOpen + ' 天') + '\t' +
-            comp + '\t' + (b.reporter || '-') + '\t' + owner + '\t' + bugTitle(b);
-    });
-    var text = 'Key\t优先级\t已开\t组件\t报单人\t负责人\t标题\n' + lines.join('\n') +
-        '\n\nKeys: ' + arr.map(function (b) { return b.bugId; }).join(', ');
-    slaCopyWithFallback(text, '待接单队列（' + arr.length + ' 条）');
-}
-
 function slaCopyPaused() {
     var bugs = (Dashboard.allBugs || []).filter(function (b) { return b.sla && b.sla.paused; });
     if (!bugs.length) { slaToast('当前没有挂起单', true); return; }
@@ -2608,6 +2571,7 @@ function slaCopyFix() {
     var open = (Dashboard.allBugs || []).filter(function (b) { return b.sla && !b.sla.closed; });
     var rows = open.filter(function (b) {
         var s = b.sla;
+        if (s.paused) return false;          // 挂起 = 不追踪 SLA，复制清单同样排除
         var isOver = (s.fixOver || 0) > 0;
         var isNear = s.fixRemain !== null && s.fixRemain >= 0 && s.fixRemain <= Math.max(1, Math.round((s.fixTarget || 0) * 0.2));
         return isOver || isNear;
@@ -2718,6 +2682,204 @@ function slaToast(msg, isErr) {
     t.style.display = 'block';
     if (window.__slaToastTimer) clearTimeout(window.__slaToastTimer);
     window.__slaToastTimer = setTimeout(function () { t.style.display = 'none'; }, 2600);
+}
+
+
+/* ============ SLA 每周提醒邮件（手动导出：每人一封 + 总览） ============
+   本阶段不发信、不写 JIRA：只在页面上把「谁该更新哪几条」按人分好，
+   由 Kobe 手工导出 .eml（双击 Outlook 打开，To 已按 JIRA 负责人邮箱预填）或复制正文后自行发送。 */
+var SLA_REMIND = { data: null, scope: 'overview', cur: null, loading: false };
+
+function slaProjectKey() {
+    var el = document.getElementById('project-select');
+    var v = el ? String(el.value || '') : '';
+    if (!v && Dashboard.selectedProjects && Dashboard.selectedProjects.length) v = Dashboard.selectedProjects[0];
+    return v || 'BR288Y';
+}
+
+function openSlaReminder() {
+    var modal = document.getElementById('sla-remind-modal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    if (!SLA_REMIND.data) slaRemindLoad(false);
+    else slaRemindRender();
+}
+
+function closeSlaReminder() {
+    var modal = document.getElementById('sla-remind-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function slaRemindRefresh() { slaRemindLoad(true); }
+
+function slaRemindLoad(force) {
+    if (SLA_REMIND.loading) return;
+    SLA_REMIND.loading = true;
+    var meta = document.getElementById('sla-remind-meta');
+    if (meta) meta.textContent = '正在回源 JIRA 生成…（① 首次响应要抓 changelog，约 2–5 秒）';
+    var url = '/api/data/sla-reminder?project=' + encodeURIComponent(slaProjectKey()) + (force ? '&force=1' : '');
+    fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) {
+            if (r.status === 401 && typeof handleAuthExpired === 'function') { handleAuthExpired(); }
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function (d) {
+            if (!d || !d.success) throw new Error((d && d.error) || '生成失败');
+            SLA_REMIND.data = d;
+            SLA_REMIND.scope = 'overview';
+            slaRemindRender();
+        })
+        .catch(function (e) {
+            if (meta) meta.textContent = '生成失败：' + e.message;
+            slaToast('提醒邮件生成失败：' + e.message, true);
+        })
+        .then(function () { SLA_REMIND.loading = false; });
+}
+
+function slaRemindMetaText() {
+    var d = SLA_REMIND.data;
+    if (!d) return '';
+    var c = d.counts || {};
+    return '数据截至 ' + slaFmtTime(d.fetchedAt) + ' · 未关闭 ' + c.open + ' 条 · 静默超期 ' + c.silentOver + ' 条' +
+        ' · 修复超期 ' + c.fixOver + '（临期 ' + c.near + '）' +
+        ' · 收件人 ' + (d.recipients || []).length + ' + 总览';
+}
+
+function slaRemindRender() {
+    var d = SLA_REMIND.data, modal = document.getElementById('sla-remind-modal');
+    if (!d || !modal) return;
+    var meta = document.getElementById('sla-remind-meta');
+    if (meta) meta.textContent = slaRemindMetaText();
+    var list = document.getElementById('sla-remind-list');
+    var items = [{ scope: 'overview', owner: '总览（Kobe 自己看）', email: '', count: d.counts.silentOver, overview: true }]
+        .concat((d.recipients || []).map(function (r) {
+            return { scope: 'owner:' + r.owner, owner: r.owner, email: r.email,
+                     count: r.count, silentCount: r.silentCount, fixCount: r.fixCount };
+        }));
+    list.innerHTML = items.map(function (it) {
+        var badge = '';
+        if (it.overview) {
+            badge = '<span class="sla-remind-tag sla-remind-tag-ov">静默超期 ' + d.counts.silentOver + ' · 修复超期 ' + d.counts.fixOver + '</span>';
+        } else {
+            if (it.silentCount) badge += '<span class="sla-remind-tag sla-remind-tag-red">静默超期 ' + it.silentCount + '</span>';
+            if (it.fixCount) badge += '<span class="sla-remind-tag sla-remind-tag-ov">修复超期 ' + it.fixCount + '</span>';
+        }
+        return '<div class="sla-remind-item' + (SLA_REMIND.scope === it.scope ? ' active' : '') + '" data-scope="' + escAttr(it.scope) + '">' +
+            '<div class="sla-remind-name">' + escHtml(it.owner) + '</div>' +
+            '<div class="sla-remind-sub">' + (it.email ? escHtml(it.email) : (it.overview ? '给自己' : '无邮箱 · 手工选人')) + badge + '</div>' +
+            '</div>';
+    }).join('');
+    Array.prototype.forEach.call(list.querySelectorAll('.sla-remind-item'), function (el) {
+        el.onclick = function () { slaRemindSelect(el.getAttribute('data-scope')); };
+    });
+    slaRemindSelect(SLA_REMIND.scope);
+}
+
+function slaRemindPick(scope) {
+    var d = SLA_REMIND.data;
+    if (!d) return null;
+    if (scope === 'overview') return d.overview;
+    var who = String(scope).replace(/^owner:/, '');
+    var r = (d.recipients || []).filter(function (x) { return x.owner === who; })[0];
+    return r || null;
+}
+
+function slaRemindSelect(scope) {
+    SLA_REMIND.scope = scope;
+    var it = slaRemindPick(scope);
+    SLA_REMIND.cur = it;
+    Array.prototype.forEach.call(document.querySelectorAll('.sla-remind-item'), function (el) {
+        el.classList.toggle('active', el.getAttribute('data-scope') === scope);
+    });
+    var sub = document.getElementById('sla-remind-subject');
+    var to = document.getElementById('sla-remind-to');
+    var frame = document.getElementById('sla-remind-frame');
+    if (!it) { if (sub) sub.textContent = '找不到该收件人'; return; }
+    if (sub) sub.textContent = '主题：' + it.subject;
+    if (to) to.textContent = it.email ? ('To: ' + it.email) : 'To:（空，手工选人）';
+    if (frame) frame.srcdoc = it.html;
+}
+
+/* 富文本复制：临时容器 + Range 选中 + execCommand('copy') —— http 明文页也能把表格/蓝色 key 带进剪贴板 */
+function slaRemindCopyRich() {
+    var it = SLA_REMIND.cur;
+    if (!it) return;
+    var ok = false, holder = null;
+    try {
+        holder = document.createElement('div');
+        holder.style.cssText = 'position:fixed;left:-99999px;top:0;width:900px;';
+        holder.innerHTML = it.html;
+        document.body.appendChild(holder);
+        var range = document.createRange();
+        range.selectNodeContents(holder);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        ok = document.execCommand('copy');
+        sel.removeAllRanges();
+    } catch (e) { ok = false; }
+    finally { if (holder && holder.parentNode) holder.parentNode.removeChild(holder); }
+    if (ok) slaToast('已复制富文本正文 —— 新建 Outlook 邮件后 Ctrl+V 即可（表格与 key 链接都在）');
+    else slaCopyText(it.text).then(function (ok2) {
+        if (ok2) slaToast('浏览器拦了富文本，已复制纯文本（key 后带 <url>，Outlook 也会转成链接）', true);
+        else slaShowCopyDialog(it.text, '提醒邮件正文');
+    });
+}
+
+function slaRemindCopyText() {
+    var it = SLA_REMIND.cur;
+    if (!it) return;
+    slaCopyWithFallback(it.text, '提醒邮件正文（纯文本）');
+}
+
+function slaRemindEml() {
+    var it = SLA_REMIND.cur;
+    if (!it) return;
+    var url = '/api/data/sla-reminder/eml?project=' + encodeURIComponent(slaProjectKey()) +
+        '&scope=' + encodeURIComponent(SLA_REMIND.scope);
+    slaRemindDownload(url, function (name) { return name; }).then(function (ok) {
+        if (ok) slaToast('已下载 .eml —— 双击用 Outlook 打开（To 已预填），补一句后发送');
+        else slaToast('下载失败，请重试', true);
+    });
+}
+
+function slaRemindAllEml() {
+    var d = SLA_REMIND.data;
+    if (!d) return;
+    var scopes = ['overview'].concat((d.recipients || []).map(function (r) { return 'owner:' + r.owner; }));
+    slaToast('开始逐个下载 ' + scopes.length + ' 封 —— 浏览器若提示「允许多个下载」请允许');
+    var i = 0;
+    function next() {
+        if (i >= scopes.length) { slaToast('全部 ' + scopes.length + ' 封已下载'); return; }
+        var s = scopes[i++];
+        slaRemindDownload('/api/data/sla-reminder/eml?project=' + encodeURIComponent(slaProjectKey()) + '&scope=' + encodeURIComponent(s)).then(function () {
+            setTimeout(next, 700);
+        });
+    }
+    next();
+}
+
+function slaRemindDownload(url) {
+    return fetch(url, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        var cd = r.headers.get('Content-Disposition') || '';
+        var m = cd.match(/filename="?([^"]+)"?/);
+        var name = m ? m[1] : 'reminder.eml';
+        return r.blob().then(function (b) { return { b: b, name: name }; });
+    }).then(function (x) {
+        var a = document.createElement('a');
+        var u = URL.createObjectURL(x.b);
+        a.href = u;
+        a.download = x.name;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(u); a.remove(); }, 1500);
+        return true;
+    }).catch(function (e) {
+        console.warn('[SLA] 下载 .eml 失败:', e.message);
+        return false;
+    });
 }
 
 function renderBugRows(bugs) {

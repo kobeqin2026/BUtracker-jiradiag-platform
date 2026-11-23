@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JIRA Bug Dashboard - GPU Tracker</title>
     <link rel="stylesheet" href="/css/base.css">
-    <link rel="stylesheet" href="/css/jira-dashboard.css?v=28">
+    <link rel="stylesheet" href="/css/jira-dashboard.css?v=31">
     <link rel="stylesheet" href="/css/theme-kpi.css?v=7">
     <style id="theme-dashboard">
         /* jira-dashboard 浅色统一（白底，与 8089 Test Case Manager 同一套观感）：
@@ -449,32 +449,14 @@
         <!-- Trend History (cached data) - removed -->
 
         <!-- Bug Detail Table -->
-        <!-- SLA 提醒模式（暂不执行 SLA）：黄牌/红牌/修复超期/挂起/待接单，每页 5 条 —— 只提醒，不改 JIRA、不升档 -->
+        <!-- SLA 提醒模式（暂不执行 SLA）：黄牌/红牌/修复超期/挂起，每页 5 条 —— 只提醒，不改 JIRA、不升档 -->
         <div class="chart-card sla-panel" id="sla-panel" style="display:none;">
             <div class="chart-header-row">
-                <h3><span id="sla-panel-title">SLA 提醒 · 暂不执行（只读）</span> <span id="sla-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span></h3>
+                <h3><span id="sla-panel-title">SLA 提醒 · 暂不执行（只读）</span> <span id="sla-scope-note" style="font-size:12px;font-weight:400;color:#777777;"></span>
+                    <button class="sla-copy-btn sla-remind-btn" type="button" onclick="openSlaReminder()" title="按人分好的提醒邮件（每周一封）：每人一封 + 给 Kobe 的总览；手工导出 .eml 后自行发送（本阶段不发信、不写 JIRA）">📧 每周提醒邮件</button>
+                </h3>
             </div>
             <div class="sla-chips" id="sla-chips"></div>
-            <div class="sla-block">
-                <div class="sla-block-title">待接单（triage 队列） <span class="sla-hint">状态仍为 Opened 的单 —— 由 Triage Owner 手动认领；本队列只排队，<b>不做 SLA 判定、不亮灯、不计入停滞率</b></span>
-                    <button class="sla-copy-btn" onclick="slaCopyTriage()">复制清单</button>
-                </div>
-                <div class="table-wrapper">
-                    <table class="dashboard-bug-table sla-table" id="sla-triage-table">
-                        <colgroup>
-                            <col style="width:12%"><col style="width:25%"><col style="width:9%"><col style="width:9%">
-                            <col style="width:11%"><col style="width:12%"><col style="width:11%"><col style="width:11%">
-                        </colgroup>
-                        <thead><tr>
-                            <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">已开</th>
-                            <th>报单人</th><th>组件</th><th>Domain</th><th>负责人</th>
-                        </tr></thead>
-                        <tbody id="sla-triage-body"></tbody>
-                    </table>
-                </div>
-                <div class="sla-pager" id="sla-triage-pager"></div>
-                <div class="sla-empty" id="sla-triage-empty" style="display:none;">待接单队列为空（没有停留在 Opened 的单）</div>
-            </div>
             <div class="sla-block">
                 <div class="sla-block-title">黄牌清单 <span class="sla-hint">静默 &gt; 1× 心跳（只提醒、不升档）—— 周会照单点名，催一次就把心跳续上</span>
                     <button class="sla-copy-btn" onclick="slaCopyWarn()">复制清单</button>
@@ -482,11 +464,13 @@
                 <div class="table-wrapper">
                     <table class="dashboard-bug-table sla-table" id="sla-warn-table">
                         <colgroup>
-                            <col style="width:13%"><col style="width:33%"><col style="width:12%">
-                            <col style="width:9%"><col style="width:15%"><col style="width:18%">
+                            <col style="width:12%"><col style="width:30%"><col style="width:10%">
+                            <col style="width:8%"><col style="width:9%"><col style="width:15%"><col style="width:16%">
                         </colgroup>
                         <thead><tr>
-                            <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">静默(天)</th><th>Domain</th><th>负责人</th>
+                            <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">静默(天)</th>
+                            <th class="sla-num-head" title="第几次提醒 = floor(静默天数 / 心跳天数)；1 = 第一次提醒，≥3 说明这条已被提醒 3 个周期以上仍未动">第几次提醒</th>
+                            <th>Domain</th><th>负责人</th>
                         </tr></thead>
                         <tbody id="sla-warn-body"></tbody>
                     </table>
@@ -501,11 +485,12 @@
                 <div class="table-wrapper">
                     <table class="dashboard-bug-table sla-table" id="sla-red-table">
                         <colgroup>
-                            <col style="width:12%"><col style="width:28%"><col style="width:11%">
-                            <col style="width:8%"><col style="width:17%"><col style="width:13%"><col style="width:11%">
+                            <col style="width:11%"><col style="width:25%"><col style="width:10%">
+                            <col style="width:8%"><col style="width:9%"><col style="width:15%"><col style="width:11%"><col style="width:11%">
                         </colgroup>
                         <thead><tr>
                             <th>Key</th><th>标题</th><th>优先级</th><th class="sla-num-head">静默(天)</th>
+                            <th class="sla-num-head" title="第几次提醒 = floor(静默天数 / 心跳天数)；1 = 第一次提醒，≥3 说明这条已被提醒 3 个周期以上仍未动">第几次提醒</th>
                             <th class="sla-center-head" id="sla-red-act-head">提醒动作</th><th>Domain</th><th>负责人</th>
                         </tr></thead>
                         <tbody id="sla-red-body"></tbody>
@@ -515,7 +500,7 @@
                 <div class="sla-empty" id="sla-red-empty" style="display:none;">当前没有红牌单（静默都在 2× 心跳以内）</div>
             </div>
             <div class="sla-block">
-                <div class="sla-block-title">修复超期清单 <span class="sla-hint">已开 &gt; 修复 SLA（Highest 7 / High 14 / Medium 30 / Low 60 天）—— 前段是已超期，后段是临期（窗口用掉 ≥80%）</span>
+                <div class="sla-block-title">修复超期清单 <span class="sla-hint">已开 &gt; 预期修复（Highest 7 / High 14 / Medium 30 / Low 60 天）—— 前段是已超期，后段是临期（窗口用掉 ≥80%）；<b>不含挂起单</b></span>
                     <button class="sla-copy-btn" onclick="slaCopyFix()">复制清单</button>
                 </div>
                 <div class="table-wrapper">
@@ -535,7 +520,7 @@
                 <div class="sla-empty" id="sla-fix-empty" style="display:none;">当前没有修复超期或临期的单</div>
             </div>
             <div class="sla-block">
-                <div class="sla-block-title">挂起清单 <span class="sla-hint">打了 <code>sla-paused</code> 的单 —— 静默不计、不提醒；挂起 &gt;2× 心跳未解除视为解除（重新进入提醒）</span>
+                <div class="sla-block-title">挂起清单 <span class="sla-hint">打了 <code>sla-paused</code> 的单 = <b>暂时不追踪 SLA</b>：静默超期、预期修复超期、临期都不提醒（也不进每周提醒邮件）；解除追踪去掉 label 即可，下一次刷新自动回到清单</span>
                     <button class="sla-copy-btn" onclick="slaCopyPaused()">复制清单</button>
                 </div>
                 <div class="table-wrapper">
@@ -765,6 +750,35 @@
         #export-tbody tr:hover { background: #f7f9fc; }
     </style>
 
-    <script src="/js/jira-dashboard.js?v=108"></script>
+
+    <!-- SLA 每周提醒邮件（手动导出）：每人一封 + 总览；本阶段不发信、不写 JIRA -->
+    <div id="sla-remind-modal" class="sla-copy-overlay" style="display:none;">
+        <div class="sla-remind-card">
+            <div class="sla-remind-head">
+                <b>SLA 每周提醒邮件</b>
+                <span id="sla-remind-meta" class="sla-remind-meta"></span>
+                <span class="sla-remind-actions">
+                    <button class="sla-btn" type="button" onclick="slaRemindAllEml()" title="逐个下载所有收件人的 .eml（浏览器可能提示「允许多个下载」）">⬇ 全部下载 .eml</button>
+                    <button class="sla-btn" type="button" onclick="slaRemindRefresh()" title="重新回源 JIRA 生成（≈0.3s，不抓 changelog）">↻ 重新生成</button>
+                    <button class="sla-btn" type="button" onclick="closeSlaReminder()">关闭</button>
+                </span>
+            </div>
+            <div class="sla-remind-body">
+                <div class="sla-remind-list" id="sla-remind-list"></div>
+                <div class="sla-remind-preview">
+                    <div class="sla-remind-subject" id="sla-remind-subject"></div>
+                    <div class="sla-remind-toolbar">
+                        <button class="sla-btn sla-btn-primary" type="button" onclick="slaRemindCopyRich()" title="复制成富文本：粘进 Outlook 新建邮件即保留表格与蓝色可点 key">📋 复制正文（富文本）</button>
+                        <button class="sla-btn" type="button" onclick="slaRemindCopyText()" title="纯文本版本：Key 后面带尖括号 URL，粘进 Outlook 也会自动变链接">📋 复制纯文本</button>
+                        <button class="sla-btn" type="button" onclick="slaRemindEml()" title="下载 .eml：双击用 Outlook 打开（To 已按 JIRA 负责人邮箱预填），补一句就发">⬇ 下载 .eml</button>
+                        <span id="sla-remind-to" class="sla-remind-to"></span>
+                    </div>
+                    <iframe id="sla-remind-frame" class="sla-remind-frame" title="提醒邮件预览"></iframe>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/jira-dashboard.js?v=116"></script>
 </body>
 </html>

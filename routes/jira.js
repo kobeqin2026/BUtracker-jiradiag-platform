@@ -2520,4 +2520,205 @@ function extractKeywords(text, components, labels) {
     return { primary: primary.slice(0, 6), secondary: secondary.slice(0, 10) };
 }
 
+/* ============================================================================
+ * 软件 Bug SLA 提醒模式（2026-11-20 Kobe 定稿：SLA 暂不执行，只做提醒）
+ *   ① 首次响应 —— changelog 真口径：报单 → 首次离开 Opened，工作日 08:00–17:00 计
+ *   ② 持续响应 —— 心跳黄牌/红牌（含「第几次提醒」）
+ *   ③ 修复超期 —— 只进总览/周会，不进个人周提醒
+ *   全部只读：不写 JIRA、不升档、不计违约、不打标签。
+ * ========================================================================== */
+var sla = require('../lib/sla');
+
+var _frCache = {};                      // key → {t, data}
+var FR_TTL_MS = 30 * 60 * 1000;         // 30 分钟（同一天多次刷新不重复抓 changelog）
+
+function jiraGet(authHeader, apiPath) {
+    return new Promise(function (resolve, reject) {
+        var parsedUrl = url.parse(jiraConfig.baseUrl);
+        var client = parsedUrl.protocol === 'https:' ? https : http;
+        var req = client.request({
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+            path: apiPath,
+            method: 'GET',
+            rejectUnauthorized: false,
+            headers: { 'Authorization': authHeader, 'Accept': 'application/json' }
+        }, function (resp) {
+            var data = '';
+            resp.on('data', function (c) { data += c; });
+            resp.on('end', function () {
+                if (resp.statusCode < 200 || resp.statusCode >= 300) {
+                    return reject(new Error('JIRA HTTP ' + resp.statusCode));
+                }
+                try { resolve(JSON.parse(data)); } catch (e) { reject(new Error('JIRA 响应解析失败')); }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(25000, function () { req.destroy(new Error('JIRA 请求超时')); });
+        req.end();
+    });
+}
+
+/** 单条 changelog：首次 status 变更 = 首次响应 */
+async function fetchOneFirstResponse(authHeader, key) {
+    var iss = await jiraGet(authHeader, '/rest/api/2/issue/' + encodeURIComponent(key) +
+        '?expand=changelog&fields=created,status');
+    var created = iss.fields && iss.fields.created ? new Date(iss.fields.created) : null;
+    var hist = (iss.changelog && iss.changelog.histories) || [];
+    hist = hist.slice().sort(function (a, b) { return new Date(a.created) - new Date(b.created); });
+    var hit = null;
+    for (var i = 0; i < hist.length; i++) {
+        var items = hist[i].items || [];
+        for (var j = 0; j < items.length; j++) {
+            if (items[j].field === 'status') {
+                hit = {
+                    at: hist[i].created,
+                    from: items[j].fromString || '',
+                    to: items[j].toString || '',
+                    by: (hist[i].author && hist[i].author.displayName) || ''
+                };
+                break;
+            }
+        }
+        if (hit) break;
+    }
+    var curStatus = (iss.fields && iss.fields.status && iss.fields.status.name) || '';
+    return {
+        created: created ? created.toISOString() : null,
+        firstOutAt: hit ? new Date(hit.at).toISOString() : null,   // 归一到 ISO(Z)，避免浏览器 Date.parse 对 +0800 的处理差异
+        transition: hit ? (hit.from + '→' + hit.to) : null,
+        by: hit ? hit.by : null,
+        stillOpened: !hit && /^opened$/i.test(curStatus),
+        status: curStatus
+    };
+}
+
+async function fetchFirstResponseMap(authHeader, keys, force) {
+    var out = {}, stats = { total: 0, cached: 0, fetched: 0, failed: 0 };
+    var todo = [];
+    keys.forEach(function (k) {
+        stats.total++;
+        var c = _frCache[k];
+        if (!force && c && (Date.now() - c.t) < FR_TTL_MS) { out[k] = c.data; stats.cached++; }
+        else todo.push(k);
+    });
+    var idx = 0;
+    async function worker() {
+        while (idx < todo.length) {
+            var k = todo[idx++];
+            try {
+                var d = await fetchOneFirstResponse(authHeader, k);
+                _frCache[k] = { t: Date.now(), data: d };
+                out[k] = d;
+                stats.fetched++;
+            } catch (e) {
+                stats.failed++;
+                out[k] = { error: e.message };
+            }
+        }
+    }
+    var ws = [];
+    for (var i = 0; i < Math.min(6, todo.length); i++) ws.push(worker());
+    await Promise.all(ws);
+    return { map: out, stats: stats };
+}
+
+/** POST /api/data/jira-first-response {keys:[...]} —— 页面 ① 判定用 */
+router.post('/jira-first-response', auth.authenticateToken, async function (req, res) {
+    try {
+        var authHeader = getAuthHeader();
+        if (!authHeader) return res.status(500).json({ success: false, error: 'JIRA 认证未配置' });
+        var keys = (req.body && req.body.keys) || [];
+        keys = keys.filter(function (k) { return /^[A-Za-z0-9]+-\d+$/.test(k); }).slice(0, 800);
+        if (!keys.length) return res.json({ success: true, items: {}, stats: { total: 0, cached: 0, fetched: 0, failed: 0 } });
+        var r = await fetchFirstResponseMap(authHeader, keys, !!req.body.force);
+        res.set('Cache-Control', 'no-store');
+        res.json({ success: true, items: r.map, stats: r.stats });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+/** 取 owner 显示名 → 邮箱（给 .eml 填 To；JIRA 有就填，没有就留空手工选人） */
+async function fetchOwnerEmails(authHeader, project) {
+    var map = {};
+    try {
+        var jql = 'project = ' + sanitizeJiraKey(project) + ' AND issuetype = Bug AND status not in (Done, Closed, Rejected)';
+        var j = await jiraGet(authHeader, '/rest/api/2/search?jql=' + encodeURIComponent(jql) +
+            '&fields=assignee&maxResults=500');
+        ((j && j.issues) || []).forEach(function (is) {
+            var a = (is.fields && is.fields.assignee) || null;
+            if (a && a.displayName && a.emailAddress) map[a.displayName] = a.emailAddress;
+        });
+    } catch (e) {
+        console.error('[SlaReminder] owner email 取数失败:', e.message);
+    }
+    return map;
+}
+
+/** 组装模型：实时 JIRA → 静默超期清单 + 提醒邮件
+ *  2026-11-20 Kobe：① 首次响应提醒下线（triage 由 debug owner 自己做），
+ *  邮件不再抓 changelog（省 30 次 GET）；/jira-first-response 端点与缓存保留备用。 */
+async function buildSlaReminder(authHeader, project, opts) {
+    opts = opts || {};
+    var jql = 'project = ' + sanitizeJiraKey(project) + ' AND issuetype = Bug ORDER BY created DESC';
+    var bugs = await fetchJiraBugs(authHeader, jql, 500);
+    var model = sla.buildModel(bugs);
+    var emailMap = await fetchOwnerEmails(authHeader, project);
+    var mail = sla.buildReminders(model, { emailMap: emailMap, overviewOwner: opts.overviewOwner || 'Kobe' });
+    mail.fetchedAt = new Date().toISOString();
+    return mail;
+}
+
+/** GET /api/data/sla-reminder?project=BR288Y —— 每周提醒邮件（每人一封 + 总览） */
+router.get('/sla-reminder', auth.authenticateToken, async function (req, res) {
+    try {
+        var authHeader = getAuthHeader();
+        if (!authHeader) return res.status(500).json({ success: false, error: 'JIRA 认证未配置' });
+        var project = req.query.project || (jiraConfig.jql.match(/project\s*=\s*"?([A-Za-z0-9]+)"?/) || [])[1] || 'BR288Y';
+        var mail = await buildSlaReminder(authHeader, project, { force: req.query.force === '1' });
+        res.set('Cache-Control', 'no-store');
+        res.json({
+            success: true, project: project, generatedAt: mail.generatedAt, fetchedAt: mail.fetchedAt,
+            counts: mail.counts,
+            recipients: mail.recipients.map(function (r) {
+                return { owner: r.owner, email: r.email, subject: r.subject, count: r.count,
+                         silentCount: r.silentCount, fixCount: r.fixCount, html: r.html, text: r.text };
+            }),
+            overview: mail.overview
+        });
+    } catch (e) {
+        console.error('[SlaReminder] 生成失败:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+/** GET /api/data/sla-reminder/eml?project=BR288Y&scope=overview|owner:<name> —— 下载 .eml（Outlook 双击可打开） */
+router.get('/sla-reminder/eml', auth.authenticateToken, async function (req, res) {
+    try {
+        var authHeader = getAuthHeader();
+        if (!authHeader) return res.status(500).json({ success: false, error: 'JIRA 认证未配置' });
+        var project = req.query.project || 'BR288Y';
+        var scope = String(req.query.scope || 'overview');
+        var mail = await buildSlaReminder(authHeader, project, {});
+        var item = null;
+        if (scope === 'overview') item = mail.overview;
+        else if (scope.indexOf('owner:') === 0) {
+            var who = scope.slice(6);
+            item = mail.recipients.filter(function (r) { return r.owner === who; })[0] || null;
+        }
+        if (!item) return res.status(404).json({ success: false, error: '找不到该收件人的提醒（可能已无待提醒条目）' });
+        var eml = sla.buildEml({ subject: item.subject, to: item.email || '', html: item.html, text: item.text });
+        var day = new Date().toISOString().slice(0, 10);
+        var slug = (scope === 'overview' ? 'overview' : scope.slice(6)).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'owner';
+        var name = project.replace(/[^A-Za-z0-9]+/g, '') + '-reminder-' + slug + '-' + day + '.eml';
+        res.set('Cache-Control', 'no-store');
+        res.set('Content-Type', 'message/rfc822; charset=UTF-8');
+        res.set('Content-Disposition', 'attachment; filename="' + name + '"');
+        res.send(Buffer.from(eml, 'utf8'));
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 module.exports = router;
